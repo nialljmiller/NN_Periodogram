@@ -264,7 +264,7 @@ If you use this software in your research, please cite:
 
 ```
 @software{NN_Periodogram,
-  author       = {Author Name},
+  author       = {Niall Miller},
   title        = {NN\_Periodogram: Flexible Two-Stage Neural Network Periodogram Analyzer},
   year         = {2025},
   url          = {https://github.com/username/NN_Periodogram}

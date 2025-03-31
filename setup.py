@@ -98,11 +98,12 @@ setup(
         "astropy",
         "tqdm",
         "scipy",
-        # Either include direct install from GitHub repo
-        "git+https://github.com/username/NN_FAP.git",
-        # Or specify it as a regular dependency if NN_FAP is on PyPI
-        # "NN_FAP",
     ],
+    # We'll manually ensure NN_FAP is included in the package data
+    packages=find_packages() + ['NN_FAP'],
+    package_data={
+        'NN_FAP': ['*.py', 'model/*'],
+    },
     author="Niall Miller",
     author_email="niall.j.miller@gmail.com",
     description="Flexible Two-Stage NN_FAP Periodogram Analyzer",
