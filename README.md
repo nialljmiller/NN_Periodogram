@@ -34,13 +34,13 @@ The theoretical framework underpinning this implementation addresses these limit
 
    where k is an integer and P_sampling represents the characteristic sampling frequency. By analysing complementary period ranges, we effectively account for these aliasing relationships.
 
-2. **Period Grid Optimisation**: The density of the period grid is derived from the Nyquist frequency considerations and is mathematically expressed as:
+2. **Period Grid Optimisation**: The density of the period grid is derived:
 
-   ```
-   Δf = 1/(T_span × OS)
-   ```
-
-   where T_span is the time span of observations and OS is the oversampling factor. The optimal period grid ensures adequate sampling of the frequency space to detect legitimate signals without computational inefficiencies.
+The software automatically calculates an optimal period grid based on:
+- The observational time span
+- Dynamic frequency resolution derived from the data characteristics
+- Oversampling factors for enhanced resolution around expected signals
+- Mathematical justification for period density derived from signal characteristics
 
 3. **Statistical Rigour via Neural Networks**: The neural network approach provides a robust estimation of false alarm probabilities through a non-parametric methodology that adapts to the characteristics of the input data, addressing limitations in traditional FAP calculations that often assume specific noise distributions.
 
