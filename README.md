@@ -182,6 +182,10 @@ The software automatically calculates an optimal period grid based on:
 - Oversampling factors for enhanced resolution around expected signals
 - Mathematical justification for period density derived from signal characteristics
 
+## Documentation
+
+- [JOSS Paper](docs/JOSS.md) - Journal of Open Source Software submission
+
 ## Contributing
 
 Academic and technical contributions are welcomed. Please submit Pull Requests with appropriate documentation and test cases.
