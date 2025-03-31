@@ -327,10 +327,10 @@ def calculate_optimal_period_grid(time, config):
     min_periods_count = config["min_periods"]
     enforce_period_range = config["enforce_period_range"]
     
-    # Calculate the Nyquist frequency
+    # Calculate the time span for determining frequency resolution
     time_span = time.max() - time.min()
     
-    # Calculate the resolution in frequency space
+    # Calculate the resolution in frequency space based on time span and oversampling
     delta_f = 1.0 / (oversample_factor * time_span)
     
     # Convert to period space
@@ -362,7 +362,6 @@ def calculate_optimal_period_grid(time, config):
     periods = np.sort(periods)
     
     return periods
-
 
 def run_lombscargle_periodogram(time, flux, error, periods):
     """

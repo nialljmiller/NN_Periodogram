@@ -184,7 +184,7 @@ The software automatically calculates an optimal period grid based on:
 
 ## Documentation
 
-- [JOSS Paper](docs/JOSS.md) - Journal of Open Source Software submission
+- [JOSS Paper](paper.md) - Journal of Open Source Software submission
 
 ## Contributing
 

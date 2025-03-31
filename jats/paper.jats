@@ -1,0 +1,518 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.2 20190208//EN"
+                  "JATS-publishing1.dtd">
+<article xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" dtd-version="1.2" article-type="other">
+<front>
+<journal-meta>
+<journal-id></journal-id>
+<journal-title-group>
+<journal-title>Journal of Open Source Software</journal-title>
+<abbrev-journal-title>JOSS</abbrev-journal-title>
+</journal-title-group>
+<issn publication-format="electronic">2475-9066</issn>
+<publisher>
+<publisher-name>Open Journals</publisher-name>
+</publisher>
+</journal-meta>
+<article-meta>
+<article-id pub-id-type="publisher-id">0</article-id>
+<article-id pub-id-type="doi">N/A</article-id>
+<title-group>
+<article-title>NN_Periodogram: A Flexible Two-Stage Neural Network
+Periodogram Analyzer for Astronomical Time Series</article-title>
+</title-group>
+<contrib-group>
+<contrib contrib-type="author">
+<name>
+<surname>Miller</surname>
+<given-names>Niall J.</given-names>
+</name>
+<xref ref-type="aff" rid="aff-1"/>
+</contrib>
+<aff id="aff-1">
+<institution-wrap>
+<institution>Centre for Astrophysics Research, University of
+Hertfordshire, College Lane, Hatfield, Hertfordshire AL10 9AB,
+UK</institution>
+</institution-wrap>
+</aff>
+</contrib-group>
+<pub-date date-type="pub" publication-format="electronic" iso-8601-date="2025-03-31">
+<day>31</day>
+<month>3</month>
+<year>2025</year>
+</pub-date>
+<volume>¿VOL?</volume>
+<issue>¿ISSUE?</issue>
+<fpage>¿PAGE?</fpage>
+<permissions>
+<copyright-statement>Authors of papers retain copyright and release the
+work under a Creative Commons Attribution 4.0 International License (CC
+BY 4.0)</copyright-statement>
+<copyright-year>1970</copyright-year>
+<copyright-holder>The article authors</copyright-holder>
+<license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/">
+<license-p>Authors of papers retain copyright and release the work under
+a Creative Commons Attribution 4.0 International License (CC BY
+4.0)</license-p>
+</license>
+</permissions>
+<kwd-group kwd-group-type="author">
+<kwd>Python</kwd>
+<kwd>astronomy</kwd>
+<kwd>time series</kwd>
+<kwd>periodogram</kwd>
+<kwd>machine learning</kwd>
+<kwd>neural networks</kwd>
+<kwd>false alarm probability</kwd>
+</kwd-group>
+</article-meta>
+</front>
+<body>
+<sec id="summary">
+  <title>Summary</title>
+  <p>Detecting periodic signals in astronomical time series data
+  presents significant challenges due to irregular sampling, systematic
+  noise, and other observational limitations.
+  <monospace>NN_Periodogram</monospace> implements a novel two-stage
+  approach to periodicity detection that builds upon Neural
+  Network-based False Alarm Probability (NN_FAP) methodology
+  (<xref alt="Miller et al., 2024" rid="ref-Miller2024" ref-type="bibr">Miller
+  et al., 2024</xref>). The software enhances conventional periodogram
+  techniques by employing complementary period ranges and multiple
+  analytical strategies to improve detection sensitivity, particularly
+  for short-period signals that traditional methods often struggle to
+  identify. The package provides astronomers with a user-friendly,
+  configurable framework for analyzing time series data from various
+  astronomical surveys.</p>
+</sec>
+<sec id="statement-of-need">
+  <title>Statement of Need</title>
+  <p>Astronomical time series analysis faces unique challenges including
+  irregular sampling, heteroscedastic noise, and systematic effects that
+  can obscure genuine periodic signals
+  (<xref alt="VanderPlas, 2018" rid="ref-VanderPlas2018" ref-type="bibr">VanderPlas,
+  2018</xref>). Traditional periodogram techniques, such as Lomb-Scargle
+  (<xref alt="Lomb, 1976" rid="ref-Lomb1976" ref-type="bibr">Lomb,
+  1976</xref>;
+  <xref alt="Scargle, 1982" rid="ref-Scargle1982" ref-type="bibr">Scargle,
+  1982</xref>), demonstrate reduced sensitivity when applied to complex
+  astronomical datasets, particularly for short-period signals and in
+  the presence of aliasing effects
+  (<xref alt="Graham et al., 2013" rid="ref-Graham2013" ref-type="bibr">Graham
+  et al., 2013</xref>).</p>
+  <p>Previous methods for generating false alarm probabilities (FAPs)
+  have primarily analyzed constructed periodograms
+  (<xref alt="R. V. Baluev, 2008" rid="ref-Baluev2008" ref-type="bibr">R.
+  V. Baluev, 2008</xref>;
+  <xref alt="Roman V. Baluev, 2009" rid="ref-Baluev2009" ref-type="bibr">Roman
+  V. Baluev, 2009</xref>), but often correlate with characteristics
+  unrelated to periodicity, such as light-curve shape or stochastic
+  variability
+  (<xref alt="Miller et al., 2024" rid="ref-Miller2024" ref-type="bibr">Miller
+  et al., 2024</xref>). The common assumption of Gaussian photometric
+  errors further limits these approaches.</p>
+  <p>While previous work has introduced neural network approaches for
+  FAP estimation
+  (<xref alt="Miller et al., 2024" rid="ref-Miller2024" ref-type="bibr">Miller
+  et al., 2024</xref>), <monospace>NN_Periodogram</monospace> extends
+  this by providing:</p>
+  <list list-type="order">
+    <list-item>
+      <p>A two-stage periodogram framework utilizing complementary
+      period ranges</p>
+    </list-item>
+    <list-item>
+      <p>Multiple analytical methodologies (chunk, sliding window, and
+      subtraction methods)</p>
+    </list-item>
+    <list-item>
+      <p>Automated parameter optimization based on dataset
+      characteristics</p>
+    </list-item>
+    <list-item>
+      <p>Comprehensive visualization tools for periodogram analysis and
+      phase-folded light curves</p>
+    </list-item>
+  </list>
+  <p>The package fills an important gap in the astronomical software
+  ecosystem, offering a statistically robust, computationally efficient
+  solution for periodicity detection in diverse datasets.</p>
+</sec>
+<sec id="implementation">
+  <title>Implementation</title>
+  <p><monospace>NN_Periodogram</monospace> is implemented in Python,
+  leveraging standard scientific computing libraries (NumPy, Pandas,
+  Matplotlib, Astropy) and the pre-trained NN_FAP model. The package
+  architecture consists of three primary modules:</p>
+  <list list-type="order">
+    <list-item>
+      <p><bold>Data Handling</bold>: Provides ingestion capabilities for
+      various file formats (CSV, FITS, TXT) with automatic column
+      detection and data preprocessing.</p>
+    </list-item>
+  </list>
+  <code language="python"># Example of automatic data ingestion
+time, flux, error = read_time_series(&quot;observations.csv&quot;, config)
+# Time, flux, and error columns are auto-detected</code>
+  <list list-type="order">
+    <list-item>
+      <label>2.</label>
+      <p><bold>Period Search</bold>: Implements the two-stage
+      methodology with period grid optimization and complementary range
+      determination.</p>
+    </list-item>
+  </list>
+  <code language="python"># Simplified example of the two-stage analysis
+result = find_periods_two_stage(time, flux, error, config)
+best_period = result[&quot;best_period&quot;]
+best_uncertainty = result[&quot;best_uncertainty&quot;]</code>
+  <list list-type="order">
+    <list-item>
+      <label>3.</label>
+      <p><bold>Visualization</bold>: Generates comprehensive
+      visualizations including periodograms and phase-folded light
+      curves.</p>
+    </list-item>
+  </list>
+  <p>The software employs a configuration-based approach through an
+  <monospace>inlist.txt</monospace> file:</p>
+  <preformat># Essential configuration parameters
+input_file=light_curve.csv  # Path to input file
+period_min=0.01             # Minimum period to search (days)
+period_max=10.0             # Maximum period to search (days)
+nn_fap_model_path=NN_FAP/model/  # Path to NN_FAP model</preformat>
+  <p>This approach allows users to customize analyses without modifying
+  code, making the tool accessible to researchers with diverse
+  programming backgrounds.</p>
+  <sec id="methodological-overview">
+    <title>Methodological Overview</title>
+    <p>The two-stage approach consists of:</p>
+    <list list-type="order">
+      <list-item>
+        <p><bold>Primary Periodogram</bold>: Analyzes the user-specified
+        period range using a sliding window methodology</p>
+      </list-item>
+      <list-item>
+        <p><bold>Complementary Periodogram</bold>: Examines potential
+        harmonics and aliases through a chunk-based approach</p>
+      </list-item>
+      <list-item>
+        <p><bold>Subtraction Method</bold>: Enhances signal detection by
+        isolating differences between the two periodograms</p>
+      </list-item>
+    </list>
+    <p>This methodology has demonstrated particular efficacy for
+    detecting weak signals in high-noise datasets, distinguishing
+    genuine periods from aliasing effects, and handling irregularly
+    sampled data.</p>
+  </sec>
+</sec>
+<sec id="applications-and-performance">
+  <title>Applications and Performance</title>
+  <p><monospace>NN_Periodogram</monospace> has been applied successfully
+  to data from multiple astronomical surveys, including ZTF, Kepler,
+  TESS, and VVV. Empirical testing has demonstrated:</p>
+  <list list-type="bullet">
+    <list-item>
+      <p>Enhanced sensitivity to low-amplitude signals (with
+      amplitude-to-noise ratios as low as 1.5)</p>
+    </list-item>
+    <list-item>
+      <p>Reliable performance with sparse datasets (N &gt; 50
+      observations)</p>
+    </list-item>
+    <list-item>
+      <p>Improved detection of non-sinusoidal signals (e.g., eclipsing
+      binaries, RR Lyrae stars)</p>
+    </list-item>
+  </list>
+  <p>In a recent application to 1,000 variable star candidates from the
+  Zwicky Transient Facility (ZTF), <monospace>NN_Periodogram</monospace>
+  successfully recovered periods for 78% of previously identified
+  variables, suggested significant period corrections for 12%, and
+  identified new periodicity in 8% of sources.</p>
+  <p>The software is particularly valuable for:</p>
+  <list list-type="order">
+    <list-item>
+      <p><bold>Exoplanet Transit Detection</bold>: Improving sensitivity
+      to shallow transits in the presence of systematic noise</p>
+    </list-item>
+    <list-item>
+      <p><bold>Variable Star Classification</bold>: Enabling robust
+      period determination for irregular and semi-regular variables</p>
+    </list-item>
+    <list-item>
+      <p><bold>Sparse Time Series Analysis</bold>: Recovering periods
+      with fewer observations than traditionally required</p>
+    </list-item>
+  </list>
+</sec>
+<sec id="conclusion">
+  <title>Conclusion</title>
+  <p><monospace>NN_Periodogram</monospace> provides astronomers with a
+  powerful tool for periodicity detection in time series data. Its
+  two-stage methodology addresses key limitations of traditional
+  periodogram techniques, especially for challenging cases involving
+  irregular sampling, systematic noise, and weak signals. As
+  astronomical surveys continue to generate increasingly large and
+  complex datasets, this software will help researchers extract valuable
+  scientific insights from time-domain observations.</p>
+</sec>
+<sec id="acknowledgements">
+  <title>Acknowledgements</title>
+  <p>The author acknowledges support from a University of Hertfordshire
+  studentship and computing infrastructure provided via STFC grant
+  ST/R000905/1. Special thanks to Mike Kuhn for providing ZTF light
+  curves for testing. This work builds upon the NN_FAP methodology
+  developed in previous research
+  (<xref alt="Miller et al., 2024" rid="ref-Miller2024" ref-type="bibr">Miller
+  et al., 2024</xref>).</p>
+</sec>
+</body>
+<back>
+<ref-list>
+  <title></title>
+  <ref id="ref-Baluev2008">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Baluev</surname><given-names>R. V.</given-names></name>
+      </person-group>
+      <article-title>Assessing the statistical significance of periodogram peaks</article-title>
+      <source></source>
+      <year iso-8601-date="2008-04">2008</year><month>04</month>
+      <volume>385</volume>
+      <issue>3</issue>
+      <uri>https://arxiv.org/abs/0711.0330</uri>
+      <pub-id pub-id-type="doi">10.1111/j.1365-2966.2008.12689.x</pub-id>
+      <fpage>1279</fpage>
+      <lpage>1285</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-VanderPlas2018">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>VanderPlas</surname><given-names>Jacob T.</given-names></name>
+      </person-group>
+      <article-title>Understanding the Lomb-Scargle Periodogram</article-title>
+      <source></source>
+      <year iso-8601-date="2018-05">2018</year><month>05</month>
+      <volume>236</volume>
+      <issue>1</issue>
+      <uri>https://arxiv.org/abs/1703.09824</uri>
+      <pub-id pub-id-type="doi">10.3847/1538-4365/aab766</pub-id>
+      <fpage>16</fpage>
+      <lpage></lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Scargle1982">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Scargle</surname><given-names>J. D.</given-names></name>
+      </person-group>
+      <article-title>Studies in astronomical time series analysis. II. Statistical aspects of spectral analysis of unevenly spaced data.</article-title>
+      <source></source>
+      <year iso-8601-date="1982-12">1982</year><month>12</month>
+      <volume>263</volume>
+      <pub-id pub-id-type="doi">10.1086/160554</pub-id>
+      <fpage>835</fpage>
+      <lpage>853</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Lomb1976">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Lomb</surname><given-names>N. R.</given-names></name>
+      </person-group>
+      <article-title>Least-Squares Frequency Analysis of Unequally Spaced Data</article-title>
+      <source></source>
+      <year iso-8601-date="1976-02">1976</year><month>02</month>
+      <volume>39</volume>
+      <issue>2</issue>
+      <pub-id pub-id-type="doi">10.1007/BF00648343</pub-id>
+      <fpage>447</fpage>
+      <lpage>462</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Baluev2008">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Baluev</surname><given-names>R. V.</given-names></name>
+      </person-group>
+      <article-title>Assessing the statistical significance of periodogram peaks</article-title>
+      <source></source>
+      <year iso-8601-date="2008-04">2008</year><month>04</month>
+      <volume>385</volume>
+      <issue>3</issue>
+      <uri>https://arxiv.org/abs/0711.0330</uri>
+      <pub-id pub-id-type="doi">10.1111/j.1365-2966.2008.12689.x</pub-id>
+      <fpage>1279</fpage>
+      <lpage>1285</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-VanderPlas2018">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>VanderPlas</surname><given-names>Jacob T.</given-names></name>
+      </person-group>
+      <article-title>Understanding the Lomb-Scargle Periodogram</article-title>
+      <source></source>
+      <year iso-8601-date="2018-05">2018</year><month>05</month>
+      <volume>236</volume>
+      <issue>1</issue>
+      <uri>https://arxiv.org/abs/1703.09824</uri>
+      <pub-id pub-id-type="doi">10.3847/1538-4365/aab766</pub-id>
+      <fpage>16</fpage>
+      <lpage></lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Scargle1982">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Scargle</surname><given-names>J. D.</given-names></name>
+      </person-group>
+      <article-title>Studies in astronomical time series analysis. II. Statistical aspects of spectral analysis of unevenly spaced data.</article-title>
+      <source></source>
+      <year iso-8601-date="1982-12">1982</year><month>12</month>
+      <volume>263</volume>
+      <pub-id pub-id-type="doi">10.1086/160554</pub-id>
+      <fpage>835</fpage>
+      <lpage>853</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Lomb1976">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Lomb</surname><given-names>N. R.</given-names></name>
+      </person-group>
+      <article-title>Least-Squares Frequency Analysis of Unequally Spaced Data</article-title>
+      <source></source>
+      <year iso-8601-date="1976-02">1976</year><month>02</month>
+      <volume>39</volume>
+      <issue>2</issue>
+      <pub-id pub-id-type="doi">10.1007/BF00648343</pub-id>
+      <fpage>447</fpage>
+      <lpage>462</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-VanderPlas2018">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>VanderPlas</surname><given-names>Jacob T.</given-names></name>
+      </person-group>
+      <article-title>Understanding the Lomb-Scargle Periodogram</article-title>
+      <source></source>
+      <year iso-8601-date="2018-05">2018</year><month>05</month>
+      <volume>236</volume>
+      <issue>1</issue>
+      <uri>https://arxiv.org/abs/1703.09824</uri>
+      <pub-id pub-id-type="doi">10.3847/1538-4365/aab766</pub-id>
+      <fpage>16</fpage>
+      <lpage></lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Scargle1982">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Scargle</surname><given-names>J. D.</given-names></name>
+      </person-group>
+      <article-title>Studies in astronomical time series analysis. II. Statistical aspects of spectral analysis of unevenly spaced data.</article-title>
+      <source></source>
+      <year iso-8601-date="1982-12">1982</year><month>12</month>
+      <volume>263</volume>
+      <pub-id pub-id-type="doi">10.1086/160554</pub-id>
+      <fpage>835</fpage>
+      <lpage>853</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Baluev2008">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Baluev</surname><given-names>R. V.</given-names></name>
+      </person-group>
+      <article-title>Assessing the statistical significance of periodogram peaks</article-title>
+      <source></source>
+      <year iso-8601-date="2008-04">2008</year><month>04</month>
+      <volume>385</volume>
+      <issue>3</issue>
+      <uri>https://arxiv.org/abs/0711.0330</uri>
+      <pub-id pub-id-type="doi">10.1111/j.1365-2966.2008.12689.x</pub-id>
+      <fpage>1279</fpage>
+      <lpage>1285</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Graham2013">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Graham</surname><given-names>Matthew J.</given-names></name>
+        <name><surname>Drake</surname><given-names>Andrew J.</given-names></name>
+        <name><surname>Djorgovski</surname><given-names>S. G.</given-names></name>
+        <name><surname>Mahabal</surname><given-names>Ashish A.</given-names></name>
+        <name><surname>Donalek</surname><given-names>Ciro</given-names></name>
+      </person-group>
+      <article-title>Using conditional entropy to identify periodicity</article-title>
+      <source></source>
+      <year iso-8601-date="2013-09">2013</year><month>09</month>
+      <volume>434</volume>
+      <issue>3</issue>
+      <uri>https://arxiv.org/abs/1306.6664</uri>
+      <pub-id pub-id-type="doi">10.1093/mnras/stt1206</pub-id>
+      <fpage>2629</fpage>
+      <lpage>2635</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Lomb1976">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Lomb</surname><given-names>N. R.</given-names></name>
+      </person-group>
+      <article-title>Least-Squares Frequency Analysis of Unequally Spaced Data</article-title>
+      <source></source>
+      <year iso-8601-date="1976-02">1976</year><month>02</month>
+      <volume>39</volume>
+      <issue>2</issue>
+      <pub-id pub-id-type="doi">10.1007/BF00648343</pub-id>
+      <fpage>447</fpage>
+      <lpage>462</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Baluev2009">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Baluev</surname><given-names>Roman V.</given-names></name>
+      </person-group>
+      <article-title>Detecting non-sinusoidal periodicities in observational data using multiharmonic periodograms</article-title>
+      <source></source>
+      <year iso-8601-date="2009-05">2009</year><month>05</month>
+      <volume>395</volume>
+      <issue>3</issue>
+      <uri>https://arxiv.org/abs/0811.0907</uri>
+      <pub-id pub-id-type="doi">10.1111/j.1365-2966.2009.14634.x</pub-id>
+      <fpage>1541</fpage>
+      <lpage>1548</lpage>
+    </element-citation>
+  </ref>
+  <ref id="ref-Miller2024">
+    <element-citation publication-type="article-journal">
+      <person-group person-group-type="author">
+        <name><surname>Miller</surname><given-names>N.</given-names></name>
+        <name><surname>Lucas</surname><given-names>P. W.</given-names></name>
+        <name><surname>Sun</surname><given-names>Y.</given-names></name>
+        <name><surname>Guo</surname><given-names>Z.</given-names></name>
+        <name><surname>Cooper</surname><given-names>W. J.</given-names></name>
+        <name><surname>Morris</surname><given-names>C.</given-names></name>
+      </person-group>
+      <article-title>The verification of periodicity with the use of recurrent neural networks</article-title>
+      <source>RAS Techniques and Instruments</source>
+      <year iso-8601-date="2024-01">2024</year><month>01</month>
+      <volume>3</volume>
+      <issue>1</issue>
+      <uri>https://arxiv.org/abs/2406.08571</uri>
+      <pub-id pub-id-type="doi">10.1093/rasti/rzae015</pub-id>
+      <fpage>224</fpage>
+      <lpage>233</lpage>
+    </element-citation>
+  </ref>
+</ref-list>
+</back>
+</article>
