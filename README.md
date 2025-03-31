@@ -31,16 +31,33 @@ NN_Periodogram implements a generalized two-stage periodogram approach for time 
 
 ### Basic Installation
 
+The easiest way to install is using the provided installation script:
+
 ```bash
 # Clone the repository
-git clone https://github.com/username/NN_Periodogram.git
+git clone https://github.com/nialljmiller/NN_Periodogram.git
 cd NN_Periodogram
 
-# Install dependencies (including NN_FAP)
-pip install -r requirements.txt
+# Run the installation script (downloads model files automatically)
+bash install.sh
+```
 
-# Install the package in development mode
+### Manual Installation
+
+If you prefer to install manually:
+
+```bash
+# Clone the repository
+git clone https://github.com/nialljmiller/NN_Periodogram.git
+cd NN_Periodogram
+
+# Install the package with model download
+python setup.py download_model
+python setup.py install
+
+# Or in development mode
 pip install -e .
+python setup.py download_model
 ```
 
 ### Alternative Installation Methods
@@ -48,7 +65,16 @@ pip install -e .
 If you prefer to install directly from GitHub:
 
 ```bash
-pip install git+https://github.com/username/NN_Periodogram.git
+pip install git+https://github.com/nialljmiller/NN_Periodogram.git
+```
+
+**Note:** When installing from GitHub, you'll need to download the model files manually:
+
+```bash
+# Download and extract model files
+wget https://nialljmiller.com/projects/FAP/model.tar.gz
+tar -xzf model.tar.gz
+mv model NN_FAP/model
 ```
 
 ## Quick Start
@@ -161,6 +187,30 @@ Unlike the chunk method, the sliding window method uses overlapping windows that
 
 ### Subtraction Method
 This novel approach enhances the detection of signals in specific period ranges by subtracting the complementary periodogram from the primary periodogram. This helps isolate signals of interest from the background noise and systematic effects.
+
+## NN_FAP Models
+
+NN_Periodogram requires trained neural network models from the NN_FAP package to function properly. These models are used to estimate False Alarm Probabilities (FAP) for detected signals.
+
+### Model Files
+
+The required model files will be downloaded automatically during installation. They include:
+- Neural network model definition files (`.json`)
+- Pre-trained weights (`.h5`)
+- Model history and performance metrics
+
+### Manual Model Download
+
+If the automatic download fails, you can manually download the model files:
+
+```bash
+wget https://nialljmiller.com/projects/FAP/model.tar.gz
+tar -xzf model.tar.gz
+mkdir -p NN_FAP
+mv model NN_FAP/
+```
+
+The model files should be placed in the `NN_FAP/model/` directory relative to your installation.
 
 ## Output Files
 
