@@ -16,7 +16,7 @@ affiliations:
  - name: Centre for Astrophysics Research, University of Hertfordshire, College Lane, Hatfield, Hertfordshire AL10 9AB, UK
    index: 1
 date: 31 March 2025
-bibliography: paper.bib
+bibliography: papers.bib
 ---
 
 # Summary
