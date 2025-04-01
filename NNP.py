@@ -982,6 +982,232 @@ class NNPeriodogram:
             "best_uncertainty": best_uncertainty
         }
         
+
+
+    def find_periods(self, time, flux, error=None):
+        """
+        Find periods using the two-stage NN_FAP periodogram method.
+        
+        Parameters
+        ----------
+        time : array
+            Time array (days)
+        flux : array
+            Flux array (normalized)
+        error : array, optional
+            Error array. If None, uses 0.001 for all points
+            
+        Returns
+        -------
+        dict
+            Dictionary of results including best periods and periodograms
+        """
+        # Create error array if not provided
+        if error is None:
+            error = np.ones_like(flux) * 0.001
+                
+        logger.info("Running two-stage periodogram analysis...")
+        
+        # Extract parameters from config
+        period_min = self.config["period_min"]
+        period_max = self.config["period_max"]
+        model_path = self.config["nn_fap_model_path"]
+        n_periods = self.config["n_periods"]
+        use_complementary = self.config["use_complementary"]
+        use_lombscargle = self.config["use_lombscargle_fallback"]
+        
+        # Check if model path is provided (only needed if not using LombScargle)
+        if model_path is None and not use_lombscargle:
+            logger.warning("NN_FAP model path not specified. Using LombScargle as fallback.")
+            self.config["use_lombscargle_fallback"] = True
+            use_lombscargle = True
+        
+        # Validate period range
+        time_span = time.max() - time.min()
+        if period_max > time_span / 2:
+            logger.warning(f"Maximum period ({period_max}) exceeds half the time span ({time_span/2}).")
+            logger.info("Limiting maximum period to half the time span.")
+            period_max = time_span / 2
+            self.config["period_max"] = period_max
+        
+
+        # Calculate optimal period grid for the primary range
+        periods_primary = self.calculate_optimal_period_grid(time)
+        
+        # Ensure we have some periods
+        if len(periods_primary) == 0:
+            logger.warning("No periods in primary range. Creating a logarithmic grid.")
+            periods_primary = np.logspace(
+                np.log10(period_min), 
+                np.log10(period_max), 
+                self.config["min_periods"]
+            )
+        
+        # Subset to n_periods if needed
+        if len(periods_primary) > n_periods:
+            logger.info(f"Subsampling period grid from {len(periods_primary)} to {n_periods} periods")
+            periods_primary = np.logspace(
+                np.log10(period_min), 
+                np.log10(period_max), 
+                n_periods
+            )
+        
+        logger.info(f"Primary period range: {period_min} to {period_max} ({len(periods_primary)} periods)")
+        
+        # Calculate the complementary period range if enabled
+        if use_complementary:
+            comp_min, comp_max = self.create_complementary_period_range(time)
+            
+            # Temporarily update config for complementary range
+            original_period_min = self.config["period_min"]
+            original_period_max = self.config["period_max"]
+            self.config["period_min"] = comp_min
+            self.config["period_max"] = comp_max
+            
+            # Calculate optimal period grid for the complementary range
+            self.config["oversample_factor"] = self.config["oversample_factor"] / 2  # Less dense sampling
+            periods_comp = self.calculate_optimal_period_grid(time)
+            
+            # Restore original values
+            self.config["period_min"] = original_period_min
+            self.config["period_max"] = original_period_max
+            self.config["oversample_factor"] = self.config["oversample_factor"] * 2
+            
+            # Ensure we have some periods in the complementary range
+            if len(periods_comp) == 0:
+                logger.warning("No periods in complementary range. Creating a logarithmic grid.")
+                periods_comp = np.logspace(
+                    np.log10(comp_min), 
+                    np.log10(comp_max), 
+                    self.config["min_periods"]
+                )
+            
+            # Subset to n_periods if needed
+            if len(periods_comp) > n_periods:
+                periods_comp = np.logspace(
+                    np.log10(comp_min), 
+                    np.log10(comp_max), 
+                    n_periods
+                )
+            
+            logger.info(f"Complementary period range: {comp_min} to {comp_max} ({len(periods_comp)} periods)")
+        else:
+            periods_comp = periods_primary
+        
+        # Run the primary periodogram (sliding window)
+        sliding_power = self.create_nn_fap_sliding_window_periodogram(
+            time, flux, periods_primary
+        )
+        
+
+        # Run the complementary periodogram (chunk method)
+        chunk_power = self.create_nn_fap_chunk_periodogram(
+            time, flux, periods_comp
+        )
+        
+        # Create a clean copy of the original chunk power for returning
+        original_chunk_power = chunk_power.copy()
+        
+        # If complementary range is different, interpolate to match the primary range
+        if use_complementary and not np.array_equal(periods_primary, periods_comp):
+            # Make sure periods are in ascending order for interpolation
+            comp_sorted_indices = np.argsort(periods_comp)
+            primary_sorted_indices = np.argsort(periods_primary)
+            
+            # Sort periods and powers for interpolation
+            sorted_periods_comp = periods_comp[comp_sorted_indices]
+            sorted_chunk_power = chunk_power[comp_sorted_indices]
+            
+            # Interpolate to match primary periods
+            chunk_power_interp = np.interp(
+                periods_primary[primary_sorted_indices], 
+                sorted_periods_comp, 
+                sorted_chunk_power
+            )
+            
+            # Restore original order
+            temp_power = np.zeros_like(chunk_power_interp)
+            temp_power[primary_sorted_indices] = chunk_power_interp
+            chunk_power_interp = temp_power
+        else:
+            chunk_power_interp = chunk_power
+        
+        # Create the subtraction periodogram
+        subtraction_power = np.clip(sliding_power - chunk_power_interp, 0, None)
+        
+        # Find the best period from each method
+        if len(chunk_power_interp) > 0 and np.any(chunk_power_interp > 0):
+            chunk_best_idx = np.argmax(chunk_power_interp)
+            chunk_best_period = periods_primary[chunk_best_idx]
+        else:
+            logger.warning("No valid power in chunk periodogram. Using median period.")
+            chunk_best_idx = len(periods_primary) // 2
+            chunk_best_period = periods_primary[chunk_best_idx]
+        
+        if len(sliding_power) > 0 and np.any(sliding_power > 0):
+            sliding_best_idx = np.argmax(sliding_power)
+            sliding_best_period = periods_primary[sliding_best_idx]
+        else:
+            logger.warning("No valid power in sliding window periodogram. Using median period.")
+            sliding_best_idx = len(periods_primary) // 2
+            sliding_best_period = periods_primary[sliding_best_idx]
+        
+        if len(subtraction_power) > 0 and np.any(subtraction_power > 0):
+            subtraction_best_idx = np.argmax(subtraction_power)
+            subtraction_best_period = periods_primary[subtraction_best_idx]
+        else:
+            logger.warning("No valid power in subtraction periodogram. Using sliding window result.")
+            subtraction_best_idx = sliding_best_idx
+            subtraction_best_period = sliding_best_period
+        
+        # Calculate uncertainty for the best period
+        try:
+            # Find indices where subtraction power is greater than half the max power
+            max_power = np.max(subtraction_power)
+            if max_power > 0:
+                high_power_idx = np.where(subtraction_power > 0.5 * max_power)[0]
+                if len(high_power_idx) > 1:
+                    # Use the width of the peak as the uncertainty
+                    period_uncertainty = 0.5 * (
+                        periods_primary[high_power_idx[-1]] - periods_primary[high_power_idx[0]]
+                    )
+                else:
+                    # If we can't determine the width, use 1% of the period as a default
+                    period_uncertainty = 0.01 * subtraction_best_period
+            else:
+                period_uncertainty = 0.01 * subtraction_best_period
+        except Exception as e:
+            logger.warning(f"Error calculating period uncertainty: {e}")
+            period_uncertainty = 0.01 * subtraction_best_period
+        
+        logger.info(f"Method 1 (Chunk): Best period = {chunk_best_period:.6f}")
+        logger.info(f"Method 2 (Sliding): Best period = {sliding_best_period:.6f}")
+        logger.info(f"Method 3 (Subtraction): Best period = {subtraction_best_period:.6f} ± {period_uncertainty:.6f}")
+        
+        # Determine the final best period based on the subtraction method
+        best_period = subtraction_best_period
+        best_uncertainty = period_uncertainty
+        
+        return {
+            "primary_periods": periods_primary,
+            "complementary_periods": periods_comp if use_complementary else None,
+            "chunk_power": original_chunk_power,  # Return the original chunk power for the complementary range
+            "chunk_power_interp": chunk_power_interp,  # Also return the interpolated version
+            "sliding_power": sliding_power,
+            "subtraction_power": subtraction_power,
+            "chunk_best_period": chunk_best_period,
+            "sliding_best_period": sliding_best_period,
+            "subtraction_best_period": subtraction_best_period,
+            "best_period": best_period,
+            "best_uncertainty": best_uncertainty
+        }
+
+
+
+
+
+
+        
     def phase_fold_lightcurve(self, time, flux, error, period):
         """
         Phase fold a light curve.
@@ -1170,6 +1396,10 @@ class NNPeriodogram:
             
         return f'Phase-folded plot created for period {period:.6f} days'
     
+
+
+
+
     def plot_results(self, time, flux, error, result, output_file=None, title=None):
         """
         Create summary plots for the periodogram analysis with enhanced features:
@@ -1205,7 +1435,20 @@ class NNPeriodogram:
         
         # Extract data from result
         periods = result["primary_periods"]
-        chunk_power = result["chunk_power"]
+        
+        # Check if we have the interpolated chunk power
+        if "chunk_power_interp" in result:
+            chunk_power = result["chunk_power_interp"]
+        elif result["complementary_periods"] is not None and len(result["complementary_periods"]) != len(periods):
+            # If not present and dimensions differ, we need to interpolate
+            # (this is for backward compatibility with older result dictionaries)
+            comp_periods = result["complementary_periods"]
+            chunk_power = np.interp(periods, comp_periods, result["chunk_power"])
+        else:
+            # If dimensions match, use the chunk_power directly
+            chunk_power = result["chunk_power"]
+                
+        # The sliding power and subtraction power should already match primary_periods dimensions
         sliding_power = result["sliding_power"]
         subtraction_power = result["subtraction_power"]
         
@@ -1227,11 +1470,16 @@ class NNPeriodogram:
         ax1.set_title('Original Light Curve')
         ax1.grid(True, alpha=0.3)
         
+        # Find the best indices for marking the best periods on the plot
+        # We need to find the closest index in the periods array for each best period
+        chunk_best_idx = np.argmin(np.abs(periods - chunk_best_period))
+        sliding_best_idx = np.argmin(np.abs(periods - sliding_best_period))
+        subtraction_best_idx = np.argmin(np.abs(periods - subtraction_best_period))
+        
         # Plot 2: Chunk Method Periodogram
         ax2 = plt.subplot(gs[1, 0])
         ax2.plot(periods, chunk_power, 'b-', linewidth=1.5)
         # Mark the best period
-        chunk_best_idx = np.argmax(chunk_power) if np.any(chunk_power > 0) else len(periods) // 2
         ax2.axvline(chunk_best_period, color='r', linestyle='--', alpha=0.7)
         ax2.scatter([chunk_best_period], [chunk_power[chunk_best_idx]], color='red', s=50, marker='o', zorder=5)
         ax2.set_xlabel('Period')
@@ -1247,7 +1495,6 @@ class NNPeriodogram:
         ax3 = plt.subplot(gs[1, 1])
         ax3.plot(periods, sliding_power, 'g-', linewidth=1.5)
         # Mark the best period
-        sliding_best_idx = np.argmax(sliding_power) if np.any(sliding_power > 0) else len(periods) // 2
         ax3.axvline(sliding_best_period, color='r', linestyle='--', alpha=0.7)
         ax3.scatter([sliding_best_period], [sliding_power[sliding_best_idx]], color='red', s=50, marker='o', zorder=5)
         ax3.set_xlabel('Period')
@@ -1263,7 +1510,6 @@ class NNPeriodogram:
         ax4 = plt.subplot(gs[1, 2])
         ax4.plot(periods, subtraction_power, 'purple', linewidth=1.5)
         # Mark the best period
-        subtraction_best_idx = np.argmax(subtraction_power) if np.any(subtraction_power > 0) else len(periods) // 2
         ax4.axvline(subtraction_best_period, color='r', linestyle='--', alpha=0.7)
         ax4.scatter([subtraction_best_period], [subtraction_power[subtraction_best_idx]], color='red', s=50, marker='o', zorder=5)
         ax4.set_xlabel('Period')
@@ -1296,7 +1542,9 @@ class NNPeriodogram:
         self.create_phase_folded_plot(time, flux, error, subtraction_best_period, "Subtraction Method", output_file)
         
         return "Periodogram and phase-folded plots created successfully"
-    
+
+
+
     def analyze_file(self, file_path=None, output_dir=None, output_prefix=None):
         """
         Analyze a time series file and generate results.
