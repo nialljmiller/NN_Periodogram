@@ -392,7 +392,7 @@ class NNPeriodogram:
             error = error / median_flux
         
         return time, flux, error
-    
+        
     def calculate_optimal_period_grid(self, time):
         """
         Calculate an optimal period grid based on the time span of the data.
@@ -405,7 +405,7 @@ class NNPeriodogram:
         Returns
         -------
         array
-            Array of periods to test
+            Array of periods to test (in ascending order)
         """
         min_period = self.config["period_min"]
         max_period = self.config["period_max"]
@@ -432,8 +432,13 @@ class NNPeriodogram:
                 min_period = max_period * 0.5
                 f_max = 1.0 / min_period
         
-        # Create a linear frequency grid
-        frequencies = np.arange(f_min, f_max + delta_f, delta_f)
+        # Create a linear frequency grid (using np.arange with sorted bounds)
+        f_start = min(f_min, f_max)
+        f_end = max(f_min, f_max)
+        frequencies = np.arange(f_start, f_end + delta_f, delta_f)
+        
+        # Ensure frequencies are strictly increasing
+        frequencies = np.sort(frequencies)
         
         # If no frequencies were generated or very few, use a fallback
         if len(frequencies) < min_periods_count and enforce_period_range:
@@ -449,6 +454,8 @@ class NNPeriodogram:
         
         return periods
     
+
+
     def run_lombscargle_periodogram(self, time, flux, error, periods):
         """
         Run a LombScargle periodogram as a fallback method.
@@ -469,12 +476,34 @@ class NNPeriodogram:
         array
             Power array (normalized to 0-1 range)
         """
+        # Convert periods to frequencies (ensuring they're in ascending order)
+        frequencies = 1.0 / periods
+        
+        # Check if frequencies are in ascending order
+        if not np.all(np.diff(frequencies) > 0):
+            # If not, sort them
+            frequencies = np.sort(frequencies)
+        
+        # Create LombScargle object
         ls = LombScargle(time, flux, error)
-        power = ls.power(1.0 / periods)
+        
+        # Calculate power
+        power = ls.power(frequencies)
+        
         # Normalize to 0-1 range
         if np.max(power) > 0:
             power = power / np.max(power)
+            
+        # Make sure the power array is in the same order as the input periods
+        if not np.all(np.diff(periods) > 0):
+            # If periods weren't in ascending order, we need to remap the power values
+            # Convert frequencies back to periods
+            sorted_periods = 1.0 / frequencies
+            # Interpolate the power values to match the original period ordering
+            power = np.interp(periods, sorted_periods, power)
+        
         return power
+
     
     def create_complementary_period_range(self, time):
         """
@@ -520,7 +549,55 @@ class NNPeriodogram:
             comp_max = comp_min * 10
         
         return comp_min, comp_max
-    
+
+
+
+    def sliding_window_worker(self, args):
+        """
+        Worker function for the sliding window periodogram method.
+        
+        Parameters
+        ----------
+        args : tuple
+            (window_time, window_flux, periods, model_path, use_lombscargle)
+            
+        Returns
+        -------
+        array
+            Power array for this window
+        """
+        window_time, window_flux, periods, model_path, use_lombscargle = args
+        
+        if len(window_time) < 50:
+            # Skip if too few points
+            return np.zeros(len(periods))
+        
+        try:
+            if use_lombscargle:
+                # Use LombScargle as a fallback
+                window_error = np.ones_like(window_flux) * 0.001  # Default error
+                power = self.run_lombscargle_periodogram(window_time, window_flux, window_error, periods)
+            else:
+                # Try NN_FAP first
+                try:
+                    knn, model = self.get_nn_fap_model()
+                    if knn is None or model is None:  # If model loading failed
+                        raise ValueError("NN_FAP model loading failed")
+                        
+                    power = np.array([
+                        1.0 - NN_FAP.inference(period, window_flux, window_time, knn, model)
+                        for period in periods
+                    ])
+                except Exception as e:
+                    logger.warning(f"NN_FAP failed in sliding window worker: {e}. Using LombScargle as fallback.")
+                    window_error = np.ones_like(window_flux) * 0.001  # Default error
+                    power = self.run_lombscargle_periodogram(window_time, window_flux, window_error, periods)
+            
+            return power
+        except Exception as e:
+            logger.error(f"Error in sliding window worker: {e}")
+            return np.zeros(len(periods))
+
     def chunk_periodogram_worker(self, args):
         """
         Worker function for the chunk periodogram method.
@@ -566,6 +643,9 @@ class NNPeriodogram:
         except Exception as e:
             logger.error(f"Error in chunk worker: {e}")
             return np.zeros(len(periods))
+
+
+
     
     def create_nn_fap_chunk_periodogram(self, time, flux, periods):
         """
@@ -624,52 +704,6 @@ class NNPeriodogram:
             avg_power = self.run_lombscargle_periodogram(time, flux, error, periods)
         
         return avg_power
-    
-    def sliding_window_worker(self, args):
-        """
-        Worker function for the sliding window periodogram method.
-        
-        Parameters
-        ----------
-        args : tuple
-            (window_time, window_flux, periods, model_path, use_lombscargle)
-            
-        Returns
-        -------
-        array
-            Power array for this window
-        """
-        window_time, window_flux, periods, model_path, use_lombscargle = args
-        
-        if len(window_time) < 50:
-            # Skip if too few points
-            return np.zeros(len(periods))
-        
-        try:
-            if use_lombscargle:
-                # Use LombScargle as a fallback
-                window_error = np.ones_like(window_flux) * 0.001  # Default error
-                power = self.run_lombscargle_periodogram(window_time, window_flux, window_error, periods)
-            else:
-                # Try NN_FAP first
-                try:
-                    knn, model = self.get_nn_fap_model()
-                    if knn is None or model is None:  # If model loading failed
-                        raise ValueError("NN_FAP model loading failed")
-                        
-                    power = np.array([
-                        1.0 - NN_FAP.inference(period, window_flux, window_time, knn, model)
-                        for period in periods
-                    ])
-                except Exception as e:
-                    logger.warning(f"NN_FAP failed in sliding window worker: {e}. Using LombScargle as fallback.")
-                    window_error = np.ones_like(window_flux) * 0.001  # Default error
-                    power = self.run_lombscargle_periodogram(window_time, window_flux, window_error, periods)
-            
-            return power
-        except Exception as e:
-            logger.error(f"Error in sliding window worker: {e}")
-            return np.zeros(len(periods))
     
     def create_nn_fap_sliding_window_periodogram(self, time, flux, periods):
         """

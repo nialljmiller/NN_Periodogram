@@ -8,7 +8,13 @@ import matplotlib.pyplot as plt
 from astropy.timeseries import LombScargle
 
 # Import the NNPeriodogram class
-from NNP import NNPeriodogram
+# For a local import (when not installed as a package)
+try:
+    # Try to import from package
+    from NN_Periodogram import NNPeriodogram
+except ImportError:
+    # If not installed as a package, import directly from file
+    from NNP import NNPeriodogram
 
 def basic_usage_example():
     """
@@ -90,6 +96,8 @@ def comparison_with_lombscargle():
     
     # Run LombScargle for comparison
     frequencies = np.linspace(1.0/config["period_max"], 1.0/config["period_min"], config["n_periods"])
+    # Ensure frequencies are in ascending order
+    frequencies = np.sort(frequencies)
     periods = 1.0 / frequencies
     ls = LombScargle(t, y, err)
     ls_power = ls.power(frequencies)
@@ -184,7 +192,7 @@ def main():
     else:
         print("\nNo file provided for file analysis example. Skipping.")
         print("To run the file analysis example, provide a file path as a command-line argument:")
-        print("    python usage_examples.py your_data_file.csv")
+        print("    python example.py your_data_file.csv")
     
     return 0
 
