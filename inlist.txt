@@ -32,3 +32,9 @@ n_workers=None  # Number of worker processes (None for auto)
 
 # Plotting parameters
 plot_log_scale=True  # Use logarithmic scale for period axes in plots
+
+
+# Additional parameters
+use_lombscargle_fallback=True   # Fallback to LombScargle if NN_FAP fails
+enforce_period_range=True       # Enforce at least some periods in the range
+min_periods=50                  # Minimum number of periods to ensure
