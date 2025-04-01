@@ -5,6 +5,7 @@ Examples of how to use the NNPeriodogram class in your Python scripts.
 
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 from astropy.timeseries import LombScargle
 
 # Import the NNPeriodogram class
@@ -15,6 +16,12 @@ try:
 except ImportError:
     # If not installed as a package, import directly from file
     from NNP import NNPeriodogram
+
+def ensure_directory(directory):
+    """Create directory if it doesn't exist."""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        print(f"Created output directory: {directory}")
 
 def basic_usage_example():
     """
@@ -32,12 +39,16 @@ def basic_usage_example():
     err = np.ones_like(t) * 0.2  # Constant error bars
     
     # Create a configuration dictionary with our parameters
+    output_dir = "./results/example_basic"
+    ensure_directory(output_dir)
+    
     config = {
         "period_min": 0.1,          # Minimum period to search (days)
         "period_max": 1.0,          # Maximum period to search (days)
         "n_periods": 5000,          # Number of periods to sample
         "use_lombscargle_fallback": True,  # Use LombScargle since we don't have NN_FAP model here
-        "output_dir": "./results"   # Save results to this directory
+        "output_dir": output_dir,   # Save results to this directory
+        "output_prefix": "synthetic_data"  # Prefix for output filenames
     }
     
     # Create NNPeriodogram instance with our config
@@ -53,17 +64,22 @@ def basic_usage_example():
     print(f"Subtraction method best period: {result['subtraction_best_period']:.6f} days")
     print(f"Best period: {result['best_period']:.6f} ± {result['best_uncertainty']:.6f} days")
     
-    # Plot the results
-    nnp.plot_results(t, y, err, result)
+    # Plot the results (automatically saves to output_dir)
+    output_file = os.path.join(output_dir, f"{config['output_prefix']}_periodogram.png")
+    nnp.plot_results(t, y, err, result, output_file)
+    print(f"Saved periodogram plots to {output_dir}")
     
-    # Phase-fold at the best period
+    # Create phase-folded plot and save to file
+    phase_fold_output = os.path.join(output_dir, f"{config['output_prefix']}_phase_folded.png")
     plt.figure(figsize=(10, 6))
     phase, folded_y, folded_err = nnp.phase_fold_lightcurve(t, y, err, result['best_period'])
     plt.errorbar(phase, folded_y, yerr=folded_err, fmt='.', alpha=0.5)
     plt.xlabel('Phase')
     plt.ylabel('Flux')
     plt.title(f'Phase-folded Light Curve (Period = {result["best_period"]:.6f} days)')
-    plt.show()
+    plt.savefig(phase_fold_output, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved additional phase-folded plot to {phase_fold_output}")
     
     return result
 
@@ -84,12 +100,18 @@ def comparison_with_lombscargle():
     y = np.sin(2 * np.pi * true_freq * t) + 0.2 * np.random.randn(len(t))
     err = np.ones_like(t) * 0.2
     
+    # Setup output directory
+    output_dir = "./results/example_comparison"
+    ensure_directory(output_dir)
+    
     # Run NNPeriodogram
     config = {
         "period_min": 0.5,
         "period_max": 2.0,
         "n_periods": 5000,
-        "use_lombscargle_fallback": True
+        "use_lombscargle_fallback": True,
+        "output_dir": output_dir,
+        "output_prefix": "comparison"
     }
     nnp = NNPeriodogram(config)
     nnp_result = nnp.find_periods(t, y, err)
@@ -109,7 +131,8 @@ def comparison_with_lombscargle():
     print(f"NNPeriodogram best period: {nnp_result['best_period']:.6f} days")
     print(f"LombScargle best period: {ls_best_period:.6f} days")
     
-    # Plot comparison
+    # Plot comparison and save
+    comparison_output = os.path.join(output_dir, "method_comparison.png")
     plt.figure(figsize=(12, 6))
     
     # Plot NNPeriodogram results
@@ -135,7 +158,13 @@ def comparison_with_lombscargle():
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.show()
+    plt.savefig(comparison_output, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved comparison plot to {comparison_output}")
+    
+    # Also save the standard NNPeriodogram plots
+    nnp_output = os.path.join(output_dir, f"{config['output_prefix']}_periodogram.png")
+    nnp.plot_results(t, y, err, nnp_result, nnp_output)
     
     return nnp_result, ls_best_period
 
@@ -151,13 +180,18 @@ def file_analysis_example(file_path):
     """
     print(f"\n=== File Analysis Example: {file_path} ===")
     
+    # Extract filename for output directory
+    file_basename = os.path.splitext(os.path.basename(file_path))[0]
+    output_dir = f"./results/{file_basename}_analysis"
+    ensure_directory(output_dir)
+    
     # Create NNPeriodogram instance with custom config
     config = {
         "period_min": 0.01,
         "period_max": 10.0,
         "use_lombscargle_fallback": True,
-        "output_dir": "./results",
-        "output_prefix": "demo"
+        "output_dir": output_dir,
+        "output_prefix": file_basename
     }
     nnp = NNPeriodogram(config)
     
@@ -166,9 +200,19 @@ def file_analysis_example(file_path):
         result = nnp.analyze_file(file_path)
         print(f"Analysis complete! Best period: {result['best_period']:.6f} days")
         print(f"Results saved in {config['output_dir']} directory")
+        
+        # The analyze_file method already creates plots, but we'll mention the locations
+        periodogram_path = os.path.join(output_dir, f"{file_basename}_periodogram.png")
+        phase_fold_path = os.path.join(output_dir, f"{file_basename}_folded_subtraction_method.png")
+        
+        print(f"Main periodogram plot: {periodogram_path}")
+        print(f"Phase-folded plot for best period: {phase_fold_path}")
+        
         return result
     except Exception as e:
         print(f"Error analyzing file: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -194,6 +238,7 @@ def main():
         print("To run the file analysis example, provide a file path as a command-line argument:")
         print("    python example.py your_data_file.csv")
     
+    print("\nAll examples completed. Results saved in the ./results/ directory.")
     return 0
 
 

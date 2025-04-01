@@ -1207,7 +1207,7 @@ class NNPeriodogram:
 
 
 
-        
+
     def phase_fold_lightcurve(self, time, flux, error, period):
         """
         Phase fold a light curve.
@@ -1391,8 +1391,7 @@ class NNPeriodogram:
             folded_output = f"{base}_folded_{method_suffix}{ext}"
             plt.savefig(folded_output, dpi=300, bbox_inches='tight')
             plt.close()
-        else:
-            plt.show()
+
             
         return f'Phase-folded plot created for period {period:.6f} days'
     
@@ -1533,8 +1532,7 @@ class NNPeriodogram:
         if output_file:
             plt.savefig(output_file, dpi=300, bbox_inches='tight')
             plt.close()
-        else:
-            plt.show()
+
         
         # Create separate phase-folded plots for each method's best period
         self.create_phase_folded_plot(time, flux, error, chunk_best_period, "Chunk Method", output_file)
