@@ -1,7 +1,7 @@
 {
     "best_period": 0.30024617090855493,
-    "best_uncertainty": 2.865997097694364,
-    "chunk_best_period": 0.09999999999999999,
+    "best_uncertainty": 0.0030024617090855495,
+    "chunk_best_period": 0.3173229634734976,
     "sliding_best_period": 0.30024617090855493,
     "subtraction_best_period": 0.30024617090855493
 }

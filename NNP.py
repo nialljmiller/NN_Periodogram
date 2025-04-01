@@ -1006,6 +1006,13 @@ class NNPeriodogram:
         if error is None:
             error = np.ones_like(flux) * 0.001
                 
+
+        data_length = len(time)
+        use_sliding = data_length >= 50
+        use_chunk = data_length >= 200
+
+
+
         logger.info("Running two-stage periodogram analysis...")
         
         # Extract parameters from config
@@ -1098,42 +1105,49 @@ class NNPeriodogram:
         sliding_power = self.create_nn_fap_sliding_window_periodogram(
             time, flux, periods_primary
         )
-        
+                
+        if use_chunk:
+            # Run the complementary periodogram (chunk method)
+            chunk_power = self.create_nn_fap_chunk_periodogram(time, flux, periods_comp)        
+        else:
+            logger.info(f"Only {data_length} data points — skipping sliding window.")
+            chunk_power = np.zeros_like(periods_primary)
 
-        # Run the complementary periodogram (chunk method)
-        chunk_power = self.create_nn_fap_chunk_periodogram(
-            time, flux, periods_comp
-        )
+
         
         # Create a clean copy of the original chunk power for returning
         original_chunk_power = chunk_power.copy()
         
-        # If complementary range is different, interpolate to match the primary range
-        if use_complementary and not np.array_equal(periods_primary, periods_comp):
-            # Make sure periods are in ascending order for interpolation
+
+
+        if use_complementary and use_chunk and not np.array_equal(periods_primary, periods_comp):
             comp_sorted_indices = np.argsort(periods_comp)
             primary_sorted_indices = np.argsort(periods_primary)
             
-            # Sort periods and powers for interpolation
-            sorted_periods_comp = periods_comp[comp_sorted_indices]
-            sorted_chunk_power = chunk_power[comp_sorted_indices]
-            
-            # Interpolate to match primary periods
-            chunk_power_interp = np.interp(
-                periods_primary[primary_sorted_indices], 
-                sorted_periods_comp, 
-                sorted_chunk_power
-            )
-            
-            # Restore original order
-            temp_power = np.zeros_like(chunk_power_interp)
-            temp_power[primary_sorted_indices] = chunk_power_interp
-            chunk_power_interp = temp_power
+            # Match sizes before trying to index
+            if len(chunk_power) != len(periods_comp):
+                logger.warning("chunk_power size mismatch — skipping interpolation.")
+                chunk_power_interp = np.zeros_like(periods_primary)
+            else:
+                sorted_periods_comp = periods_comp[comp_sorted_indices]
+                sorted_chunk_power = chunk_power[comp_sorted_indices]
+
+                chunk_power_interp_raw = np.interp(
+                    periods_primary[primary_sorted_indices],
+                    sorted_periods_comp,
+                    sorted_chunk_power
+                )
+                chunk_power_interp = np.zeros_like(chunk_power_interp_raw)
+                chunk_power_interp[primary_sorted_indices] = chunk_power_interp_raw
         else:
             chunk_power_interp = chunk_power
         
         # Create the subtraction periodogram
-        subtraction_power = np.clip(sliding_power - chunk_power_interp, 0, None)
+        if use_sliding and use_chunk:
+            subtraction_power = np.clip(sliding_power - chunk_power_interp, 0, None)
+        else:
+            subtraction_power = np.zeros_like(sliding_power)
+            logger.info("Skipping subtraction method — insufficient data for sliding window.")
         
         # Find the best period from each method
         if len(chunk_power_interp) > 0 and np.any(chunk_power_interp > 0):
