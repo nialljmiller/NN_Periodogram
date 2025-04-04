@@ -3,7 +3,7 @@
 # Format is key=value, one per line
 
 # Input/output parameters
-input_file=detections.csv  # Path to input file (required)
+input_file=ccdetections.csv  # Path to input file (required)
 output_dir=./results  # Directory for output files
 output_prefix=periodogram  # Prefix for output filenames
 
@@ -18,8 +18,8 @@ sigma=5.0  # Sigma threshold for outlier removal
 
 # Period search parameters
 period_min=0.01  # Minimum period to search (days)
-period_max=10.0  # Maximum period to search (days)
-n_periods=1000000  # Number of periods to sample
+period_max=100.0  # Maximum period to search (days)
+n_periods=10000000  # Number of periods to sample
 oversample_factor=10  # Oversampling factor for period grid
 use_complementary=True  # Use complementary period range for method comparison
 
@@ -27,7 +27,7 @@ use_complementary=True  # Use complementary period range for method comparison
 nn_fap_model_path=NN_FAP/model/  # Path to NN_FAP model directory (required)
 window_size=200  # Size of each window for sliding window method
 chunk_size=200  # Size of each chunk for chunk method
-step_size=50  # Step size between windows
+step_size=1  # Step size between windows
 n_workers=None  # Number of worker processes (None for auto)
 
 # Plotting parameters

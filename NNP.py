@@ -1600,7 +1600,7 @@ class NNPeriodogram:
         logger.info(f"Loaded {len(time)} data points spanning {time.max() - time.min():.2f} days")
         
         # Check if we have enough data points
-        if len(time) < 50:
+        if len(time) < 30:
             logger.error(f"Insufficient data points ({len(time)}) for reliable analysis. Need at least 50.")
             raise ValueError(f"Insufficient data points ({len(time)}) for reliable analysis. Need at least 50.")
         
