@@ -3,7 +3,7 @@
 # Format is key=value, one per line
 
 # Input/output parameters
-input_file=ccdetections.csv  # Path to input file (required)
+input_file=ZTFdetections.csv  # Path to input file (required)
 output_dir=./results  # Directory for output files
 output_prefix=periodogram  # Prefix for output filenames
 
