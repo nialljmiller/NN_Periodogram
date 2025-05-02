@@ -301,7 +301,7 @@ class NNPeriodogram:
                     logger.info(f"Using first column as time: {time_col}")
             
             if flux_col is None:
-                flux_candidates = ['flux', 'Flux', 'FLUX', 'brightness', 'mag', 'magnitude']
+                flux_candidates = ['flux', 'Flux', 'FLUX', 'brightness', 'mag', 'magnitude', 'averagemag']
                 for col in flux_candidates:
                     if col in df.columns:
                         flux_col = col
@@ -983,10 +983,11 @@ class NNPeriodogram:
         }
         
 
-
     def find_periods(self, time, flux, error=None):
         """
-        Find periods using the two-stage NN_FAP periodogram method.
+        Find periods using the appropriate method based on data size:
+        - For N < 200: Only use sliding window method
+        - For N >= 200: Use two-stage NN_FAP periodogram method
         
         Parameters
         ----------
@@ -996,7 +997,7 @@ class NNPeriodogram:
             Flux array (normalized)
         error : array, optional
             Error array. If None, uses 0.001 for all points
-            
+                
         Returns
         -------
         dict
@@ -1005,22 +1006,25 @@ class NNPeriodogram:
         # Create error array if not provided
         if error is None:
             error = np.ones_like(flux) * 0.001
-                
-
+            
+        # Determine which methods to use based on data length
         data_length = len(time)
         use_sliding = data_length >= 50
         use_chunk = data_length >= 200
+        use_subtraction = use_sliding and use_chunk
 
-
-
-        logger.info("Running two-stage periodogram analysis...")
+        logger.info(f"Data length: {data_length} points")
+        if use_chunk:
+            logger.info("Running two-stage periodogram analysis with chunk, sliding window, and subtraction methods")
+        else:
+            logger.info("Running single-stage periodogram analysis with sliding window method only")
         
         # Extract parameters from config
         period_min = self.config["period_min"]
         period_max = self.config["period_max"]
         model_path = self.config["nn_fap_model_path"]
         n_periods = self.config["n_periods"]
-        use_complementary = self.config["use_complementary"]
+        use_complementary = self.config["use_complementary"] and use_chunk
         use_lombscargle = self.config["use_lombscargle_fallback"]
         
         # Check if model path is provided (only needed if not using LombScargle)
@@ -1037,7 +1041,6 @@ class NNPeriodogram:
             period_max = time_span / 2
             self.config["period_max"] = period_max
         
-
         # Calculate optimal period grid for the primary range
         periods_primary = self.calculate_optimal_period_grid(time)
         
@@ -1105,22 +1108,66 @@ class NNPeriodogram:
         sliding_power = self.create_nn_fap_sliding_window_periodogram(
             time, flux, periods_primary
         )
-                
-        if use_chunk:
-            # Run the complementary periodogram (chunk method)
-            chunk_power = self.create_nn_fap_chunk_periodogram(time, flux, periods_comp)        
-        else:
-            logger.info(f"Only {data_length} data points — skipping sliding window.")
-            chunk_power = np.zeros_like(periods_primary)
-
-
+        
+        # For small datasets, only use sliding window method
+        if not use_chunk:
+            # Find the best period from sliding window method
+            if len(sliding_power) > 0 and np.any(sliding_power > 0):
+                sliding_best_idx = np.argmax(sliding_power)
+                sliding_best_period = periods_primary[sliding_best_idx]
+            else:
+                logger.warning("No valid power in sliding window periodogram. Using median period.")
+                sliding_best_idx = len(periods_primary) // 2
+                sliding_best_period = periods_primary[sliding_best_idx]
+            
+            # Calculate uncertainty for the best period
+            try:
+                # Find indices where sliding power is greater than half the max power
+                max_power = np.max(sliding_power)
+                if max_power > 0:
+                    high_power_idx = np.where(sliding_power > 0.5 * max_power)[0]
+                    if len(high_power_idx) > 1:
+                        # Use the width of the peak as the uncertainty
+                        period_uncertainty = 0.5 * (
+                            periods_primary[high_power_idx[-1]] - periods_primary[high_power_idx[0]]
+                        )
+                    else:
+                        # If we can't determine the width, use 1% of the period as a default
+                        period_uncertainty = 0.01 * sliding_best_period
+                else:
+                    period_uncertainty = 0.01 * sliding_best_period
+            except Exception as e:
+                logger.warning(f"Error calculating period uncertainty: {e}")
+                period_uncertainty = 0.01 * sliding_best_period
+            
+            logger.info(f"Sliding Window Method: Best period = {sliding_best_period:.6f} ± {period_uncertainty:.6f}")
+            
+            # Return results for sliding window method only
+            return {
+                "primary_periods": periods_primary,
+                "complementary_periods": None,
+                "chunk_power": None,
+                "chunk_power_interp": None,
+                "sliding_power": sliding_power,
+                "subtraction_power": None,
+                "chunk_best_period": None,
+                "sliding_best_period": sliding_best_period,
+                "subtraction_best_period": None,
+                "best_period": sliding_best_period,
+                "best_uncertainty": period_uncertainty
+            }
+        
+        # For larger datasets, continue with full two-stage analysis
+        # Run the complementary periodogram (chunk method)
+        chunk_power = self.create_nn_fap_chunk_periodogram(
+            time, flux, periods_comp
+        )
         
         # Create a clean copy of the original chunk power for returning
         original_chunk_power = chunk_power.copy()
         
-
-
-        if use_complementary and use_chunk and not np.array_equal(periods_primary, periods_comp):
+        # If complementary range is different, interpolate to match the primary range
+        if use_complementary and not np.array_equal(periods_primary, periods_comp):
             comp_sorted_indices = np.argsort(periods_comp)
             primary_sorted_indices = np.argsort(periods_primary)
             
@@ -1143,11 +1190,7 @@ class NNPeriodogram:
             chunk_power_interp = chunk_power
         
         # Create the subtraction periodogram
-        if use_sliding and use_chunk:
-            subtraction_power = np.clip(sliding_power - chunk_power_interp, 0, None)
-        else:
-            subtraction_power = np.zeros_like(sliding_power)
-            logger.info("Skipping subtraction method — insufficient data for sliding window.")
+        subtraction_power = np.clip(sliding_power - chunk_power_interp, 0, None)
         
         # Find the best period from each method
         if len(chunk_power_interp) > 0 and np.any(chunk_power_interp > 0):
@@ -1205,8 +1248,8 @@ class NNPeriodogram:
         return {
             "primary_periods": periods_primary,
             "complementary_periods": periods_comp if use_complementary else None,
-            "chunk_power": original_chunk_power,  # Return the original chunk power for the complementary range
-            "chunk_power_interp": chunk_power_interp,  # Also return the interpolated version
+            "chunk_power": original_chunk_power,
+            "chunk_power_interp": chunk_power_interp,
             "sliding_power": sliding_power,
             "subtraction_power": subtraction_power,
             "chunk_best_period": chunk_best_period,
@@ -1215,8 +1258,6 @@ class NNPeriodogram:
             "best_period": best_period,
             "best_uncertainty": best_uncertainty
         }
-
-
 
 
 
@@ -1298,9 +1339,12 @@ class NNPeriodogram:
         
         return bin_centers, binned_flux, binned_error
     
+
+
+
     def create_phase_folded_plot(self, time, flux, error, period, method_name, output_file=None):
         """
-        Create a phase-folded plot for a specific period.
+        Create an improved phase-folded plot for a specific period.
         Shows data from phase 0 to 2 and includes both raw and binned/fitted data.
         
         Parameters
@@ -1379,10 +1423,10 @@ class NNPeriodogram:
         except Exception as e:
             logger.warning(f"Error fitting smooth curve: {e}")
         
-        # Set labels and title
+        # Set labels with clear units
         plt.xlabel('Phase')
         plt.ylabel('Normalized Flux')
-        plt.title(f'Phase-folded Light Curve - {method_name}\nPeriod = {period:.6f} days ({period*24:.4f} hours)')
+        plt.title(f'Phase-folded Light Curve - Period = {period:.6f} days ({period*24:.4f} hours)')
         
         # Set x-axis limits to show exactly two cycles
         plt.xlim(0, 2)
@@ -1392,7 +1436,7 @@ class NNPeriodogram:
         plt.legend(loc='best')
         
         # Add annotations showing the period in different units
-        plt.annotate(f'Period: {period:.6f} days = {period*24:.4f} hours', 
+        plt.annotate(f'Period: {period:.6f} days = {period*24:.4f} hours = {period*24*60:.1f} minutes', 
                     xy=(0.02, 0.02), xycoords='axes fraction',
                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="grey", alpha=0.8))
         
@@ -1405,20 +1449,18 @@ class NNPeriodogram:
             folded_output = f"{base}_folded_{method_suffix}{ext}"
             plt.savefig(folded_output, dpi=300, bbox_inches='tight')
             plt.close()
-
-            
+                
         return f'Phase-folded plot created for period {period:.6f} days'
-    
-
-
 
 
     def plot_results(self, time, flux, error, result, output_file=None, title=None):
         """
-        Create summary plots for the periodogram analysis with enhanced features:
-        1. Show the full range in all periodograms
-        2. Create separate phase folded plots for each method's best period
-        3. Show real and fitted data from 0-2φ in phase folded plots
+        Create improved periodogram plot with:
+        - Clear units (days)
+        - Inset zoom of the peak period
+        - No wasted space from excessive titles
+        - For N < 200: Only show sliding window method
+        - For N >= 200: Show all three methods
         
         Parameters
         ----------
@@ -1434,128 +1476,149 @@ class NNPeriodogram:
             Output file path. If None, plots are displayed instead
         title : str, optional
             Title for the plot. If None, default title is used
-            
+                
         Returns
         -------
         str
             Success message
         """
         # Use parameters from config if not specified
-        if title is None:
-            title = self.config.get("plot_title")
-        
         plot_log_scale = self.config["plot_log_scale"]
         
         # Extract data from result
         periods = result["primary_periods"]
-        
-        # Check if we have the interpolated chunk power
-        if "chunk_power_interp" in result:
-            chunk_power = result["chunk_power_interp"]
-        elif result["complementary_periods"] is not None and len(result["complementary_periods"]) != len(periods):
-            # If not present and dimensions differ, we need to interpolate
-            # (this is for backward compatibility with older result dictionaries)
-            comp_periods = result["complementary_periods"]
-            chunk_power = np.interp(periods, comp_periods, result["chunk_power"])
-        else:
-            # If dimensions match, use the chunk_power directly
-            chunk_power = result["chunk_power"]
-                
-        # The sliding power and subtraction power should already match primary_periods dimensions
         sliding_power = result["sliding_power"]
-        subtraction_power = result["subtraction_power"]
         
-        # Get best periods from each method
-        chunk_best_period = result["chunk_best_period"]
-        sliding_best_period = result["sliding_best_period"]
-        subtraction_best_period = result["subtraction_best_period"]
-        best_uncertainty = result["best_uncertainty"]
+        # Check data size to determine which methods to show
+        data_length = len(time)
+        show_all_methods = data_length >= 200
         
-        # Create a figure with grid layout for periodograms
-        plt.figure(figsize=(15, 10))
-        gs = GridSpec(2, 3, figure=plt.gcf())
+        if show_all_methods:
+            # Extract additional data for larger datasets
+            if "chunk_power_interp" in result:
+                chunk_power = result["chunk_power_interp"]
+            elif result["complementary_periods"] is not None and len(result["complementary_periods"]) != len(periods):
+                comp_periods = result["complementary_periods"]
+                chunk_power = np.interp(periods, comp_periods, result["chunk_power"])
+            else:
+                chunk_power = result["chunk_power"]
+                
+            subtraction_power = result["subtraction_power"]
+            chunk_best_period = result["chunk_best_period"]
+            subtraction_best_period = result["subtraction_best_period"]
+            best_period = subtraction_best_period
+        else:
+            # For smaller datasets, only use sliding window
+            sliding_best_period = result["sliding_best_period"]
+            best_period = sliding_best_period
+        
+        # Find the best indices for marking
+        sliding_best_idx = np.argmin(np.abs(periods - sliding_best_period))
+        
+        # Create a cleaner figure layout
+        fig = plt.figure(figsize=(10, 8))
+        
+        # Layout with GridSpec
+        gs = GridSpec(2, 1, height_ratios=[1, 1.5], figure=fig)
         
         # Plot 1: Original Light Curve
-        ax1 = plt.subplot(gs[0, :])
+        ax1 = fig.add_subplot(gs[0])
         ax1.errorbar(time, flux, yerr=error, fmt='.', color='black', alpha=0.3, ecolor='lightgray', markersize=3)
-        ax1.set_xlabel('Time')
+        ax1.set_xlabel('Time (MJD)')
         ax1.set_ylabel('Normalized Flux')
         ax1.set_title('Original Light Curve')
         ax1.grid(True, alpha=0.3)
         
-        # Find the best indices for marking the best periods on the plot
-        # We need to find the closest index in the periods array for each best period
-        chunk_best_idx = np.argmin(np.abs(periods - chunk_best_period))
-        sliding_best_idx = np.argmin(np.abs(periods - sliding_best_period))
-        subtraction_best_idx = np.argmin(np.abs(periods - subtraction_best_period))
+        # Plot 2: Periodogram
+        ax2 = fig.add_subplot(gs[1])
         
-        # Plot 2: Chunk Method Periodogram
-        ax2 = plt.subplot(gs[1, 0])
-        ax2.plot(periods, chunk_power, 'b-', linewidth=1.5)
-        # Mark the best period
-        ax2.axvline(chunk_best_period, color='r', linestyle='--', alpha=0.7)
-        ax2.scatter([chunk_best_period], [chunk_power[chunk_best_idx]], color='red', s=50, marker='o', zorder=5)
-        ax2.set_xlabel('Period')
+        # Plot appropriate periodogram based on data size
+        if show_all_methods:
+            # For datasets with >200 points, plot subtraction method
+            ax2.plot(periods, subtraction_power, 'purple', linewidth=1.5)
+            best_idx = np.argmin(np.abs(periods - best_period))
+            # Mark the best period
+            ax2.axvline(best_period, color='r', linestyle='--', alpha=0.7)
+            ax2.scatter([best_period], [subtraction_power[best_idx]], color='red', s=50, marker='o', zorder=5)
+        else:
+            # For smaller datasets, plot sliding window method
+            ax2.plot(periods, sliding_power, 'g-', linewidth=1.5)
+            # Mark the best period
+            ax2.axvline(sliding_best_period, color='r', linestyle='--', alpha=0.7)
+            ax2.scatter([sliding_best_period], [sliding_power[sliding_best_idx]], color='red', s=50, marker='o', zorder=5)
+        
+        ax2.set_xlabel('Period (days)')
         ax2.set_ylabel('Power (1-FAP)')
-        ax2.set_title(f'Method 1: Chunk Method\nBest Period: {chunk_best_period:.6f}')
         if plot_log_scale:
             ax2.set_xscale('log')
         # Ensure full range is visible
         ax2.set_xlim(min(periods), max(periods))
         ax2.grid(True, alpha=0.3)
         
-        # Plot 3: Sliding Window Periodogram
-        ax3 = plt.subplot(gs[1, 1])
-        ax3.plot(periods, sliding_power, 'g-', linewidth=1.5)
-        # Mark the best period
-        ax3.axvline(sliding_best_period, color='r', linestyle='--', alpha=0.7)
-        ax3.scatter([sliding_best_period], [sliding_power[sliding_best_idx]], color='red', s=50, marker='o', zorder=5)
-        ax3.set_xlabel('Period')
-        ax3.set_ylabel('Power (1-FAP)')
-        ax3.set_title(f'Method 2: Sliding Window\nBest Period: {sliding_best_period:.6f}')
-        if plot_log_scale:
-            ax3.set_xscale('log')
-        # Ensure full range is visible
-        ax3.set_xlim(min(periods), max(periods))
-        ax3.grid(True, alpha=0.3)
+        # Add inset plot with zoom on the peak period
+        # Create inset axes
+        axins = ax2.inset_axes([0.65, 0.65, 0.3, 0.3])
         
-        # Plot 4: Subtraction Method Periodogram
-        ax4 = plt.subplot(gs[1, 2])
-        ax4.plot(periods, subtraction_power, 'purple', linewidth=1.5)
-        # Mark the best period
-        ax4.axvline(subtraction_best_period, color='r', linestyle='--', alpha=0.7)
-        ax4.scatter([subtraction_best_period], [subtraction_power[subtraction_best_idx]], color='red', s=50, marker='o', zorder=5)
-        ax4.set_xlabel('Period')
-        ax4.set_ylabel('Power (1-FAP)')
-        ax4.set_title(f'Method 3: Subtraction\nBest Period: {subtraction_best_period:.6f}')
-        if plot_log_scale:
-            ax4.set_xscale('log')
-        # Ensure full range is visible
-        ax4.set_xlim(min(periods), max(periods))
-        ax4.grid(True, alpha=0.3)
+        # Determine zoom range around the best period (±10%)
+        min_zoom = max(best_period * 0.9, min(periods))
+        max_zoom = min(best_period * 1.1, max(periods))
         
-        # Add overall title
-        if title:
-            plt.suptitle(title, fontsize=16)
+        # Plot the same data in the inset
+        if show_all_methods:
+            axins.plot(periods, subtraction_power, 'purple', linewidth=1.5)
         else:
-            plt.suptitle(f'Two-Stage NN_FAP Periodogram Analysis', fontsize=16)
+            axins.plot(periods, sliding_power, 'g-', linewidth=1.5)
         
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        # Mark the best period in the inset
+        axins.axvline(best_period, color='r', linestyle='--', alpha=0.7)
+        
+        # Set the limits for the inset
+        axins.set_xlim(min_zoom, max_zoom)
+        
+        # Set y-limits for inset to zoom on the peak
+        if show_all_methods:
+            peak_power = subtraction_power[best_idx]
+            mask = (periods >= min_zoom) & (periods <= max_zoom)
+            if np.any(mask):
+                min_power = max(0, np.min(subtraction_power[mask]))
+                axins.set_ylim(min_power, peak_power * 1.1)
+        else:
+            peak_power = sliding_power[sliding_best_idx]
+            mask = (periods >= min_zoom) & (periods <= max_zoom)
+            if np.any(mask):
+                min_power = max(0, np.min(sliding_power[mask]))
+                axins.set_ylim(min_power, peak_power * 1.1)
+        
+        # Add grid to inset
+        axins.grid(True, alpha=0.3)
+        
+        # Add annotation for the best period
+        ax2.annotate(f'Best Period = {best_period:.6f} days ({best_period*24:.4f} hours)',
+                    xy=(0.05, 0.05), xycoords='axes fraction',
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="grey", alpha=0.8),
+                    fontsize=10)
+        
+        # Show connection between the main plot and the inset
+        ax2.indicate_inset_zoom(axins, edgecolor="black")
+        
+        plt.tight_layout()
         
         # Save or show the periodogram figure
         if output_file:
             plt.savefig(output_file, dpi=300, bbox_inches='tight')
             plt.close()
-
         
-        # Create separate phase-folded plots for each method's best period
-        self.create_phase_folded_plot(time, flux, error, chunk_best_period, "Chunk Method", output_file)
-        self.create_phase_folded_plot(time, flux, error, sliding_best_period, "Sliding Window Method", output_file)
-        self.create_phase_folded_plot(time, flux, error, subtraction_best_period, "Subtraction Method", output_file)
+        # Create phase-folded plots based on dataset size
+        if show_all_methods:
+            # Create separate phase-folded plots for each method's best period
+            self.create_phase_folded_plot(time, flux, error, chunk_best_period, "Chunk Method", output_file)
+            self.create_phase_folded_plot(time, flux, error, sliding_best_period, "Sliding Window Method", output_file)
+            self.create_phase_folded_plot(time, flux, error, subtraction_best_period, "Subtraction Method", output_file)
+        else:
+            # Only create phase-folded plot for sliding window method
+            self.create_phase_folded_plot(time, flux, error, sliding_best_period, "Periodogram Analysis", output_file)
         
         return "Periodogram and phase-folded plots created successfully"
-
-
 
     def analyze_file(self, file_path=None, output_dir=None, output_prefix=None):
         """
@@ -1569,7 +1632,7 @@ class NNPeriodogram:
             Directory for output files. If None, uses config["output_dir"]
         output_prefix : str, optional
             Prefix for output filenames. If None, uses config["output_prefix"]
-            
+                
         Returns
         -------
         dict
@@ -1607,8 +1670,15 @@ class NNPeriodogram:
         # Find periods using the two-stage method
         logger.info("Running period analysis...")
         result = self.find_periods(time, flux, error)
-        best_period = result["best_period"]
-        best_uncertainty = result["best_uncertainty"]
+        
+        # Determine which period to use based on available methods
+        if result["subtraction_best_period"] is not None:
+            best_period = result["subtraction_best_period"]
+            best_uncertainty = result["best_uncertainty"]
+        else:
+            best_period = result["sliding_best_period"]
+            best_uncertainty = result["best_uncertainty"]
+        
         logger.info(f"Best period: {best_period:.6f} ± {best_uncertainty:.6f} days")
         logger.info(f"Best period in hours: {best_period*24:.6f} ± {best_uncertainty*24:.6f} hours")
         
@@ -1621,17 +1691,27 @@ class NNPeriodogram:
         results_file = os.path.join(output_dir, f"{output_prefix}_{input_basename}_results.json")
         with open(results_file, 'w') as f:
             # Convert numpy arrays to lists for JSON serialization
+            # Handle None values appropriately
             serializable_result = {
-                "best_period": float(result["best_period"]),
-                "best_uncertainty": float(result["best_uncertainty"]),
-                "chunk_best_period": float(result["chunk_best_period"]),
+                "best_period": float(best_period),
+                "best_uncertainty": float(best_uncertainty),
                 "sliding_best_period": float(result["sliding_best_period"]),
-                "subtraction_best_period": float(result["subtraction_best_period"]),
             }
+            
+            # Only include these if they exist
+            if result["chunk_best_period"] is not None:
+                serializable_result["chunk_best_period"] = float(result["chunk_best_period"])
+            
+            if result["subtraction_best_period"] is not None:
+                serializable_result["subtraction_best_period"] = float(result["subtraction_best_period"])
+            
             json.dump(serializable_result, f, indent=4)
+        
         logger.info(f"Results saved to {results_file}")
         
         return result
+
+
         
     @staticmethod
     def process_directory(input_dir, config=None):
