@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: NN_Periodogram
+Version: 0.1.0
+Summary: Flexible Two-Stage NN_FAP Periodogram Analyzer
+Home-page: https://github.com/nialljmiller/NN_Periodogram
+Author: Niall Miller
+Author-email: niall.j.miller@gmail.com
+Keywords: astronomy,periodogram,time series,NN_FAP
+Requires-Python: >=3.6
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: matplotlib
+Requires-Dist: astropy
+Requires-Dist: tqdm
+Requires-Dist: scipy
+Requires-Dist: NN_FAP @ git+https://github.com/nialljmiller/NN_FAP.git
+Dynamic: author
+Dynamic: author-email
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

@@ -1,0 +1,2 @@
+[console_scripts]
+nnp = NN_Periodogram.NNP:main

@@ -1,0 +1,7 @@
+numpy
+pandas
+matplotlib
+astropy
+tqdm
+scipy
+NN_FAP @ git+https://github.com/nialljmiller/NN_FAP.git

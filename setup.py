@@ -1,9 +1,10 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name="NN_Periodogram",
     version="0.1.0",
-    packages=find_packages(),
+    packages=["NN_Periodogram"],
+    package_dir={"NN_Periodogram": "."},
     install_requires=[
         "numpy",
         "pandas",
@@ -11,20 +12,17 @@ setup(
         "astropy",
         "tqdm",
         "scipy",
-        # Either include direct install from GitHub
-        "NN_FAP @ git+https://github.com/username/NN_FAP.git",
-        # Or specify it as a dependency if it's on PyPI
-        # "NN_FAP",
+        "NN_FAP @ git+https://github.com/nialljmiller/NN_FAP.git",
     ],
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Niall Miller",
+    author_email="niall.j.miller@gmail.com",
     description="Flexible Two-Stage NN_FAP Periodogram Analyzer",
     keywords="astronomy, periodogram, time series, NN_FAP",
-    url="https://github.com/username/NN_Periodogram",
+    url="https://github.com/nialljmiller/NN_Periodogram",
     python_requires='>=3.6',
     entry_points={
         'console_scripts': [
-            'nnp=NNP:main',
+            'nnp=NN_Periodogram.NNP:main',
         ],
     },
 )
