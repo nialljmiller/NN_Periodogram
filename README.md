@@ -1,214 +1,56 @@
-# NN_Periodogram: A Flexible Two-Stage Neural Network Periodogram Analyser
+# NN_Periodogram
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+Neural-network false-alarm probabilities and periodograms for astronomical time
+series: one package, one API, GPU-ready. It brings together
+[NN_FAP](https://github.com/nialljmiller/NN_FAP) (Miller et al. 2022) and the
+earlier NN_Periodogram code, which is kept at the `legacy-2025` tag.
 
-## Abstract
+```python
+import nn_periodogram
 
-NN_Periodogram implements a generalised two-stage approach to time series periodicity analysis with Neural Network-based False Alarm Probability (NN_FAP) estimation. The software is optimised for detecting short-period signals in astronomical datasets but remains applicable to diverse time series analysis contexts. By utilising complementary period ranges and multiple analytical methodologies, the framework enhances signal detection capabilities beyond traditional periodogram techniques.
+p = nn_periodogram.periodogram(time, mag)       # search all trial periods
+p.best_period, p.best_fap, p.peaks, p.note
+p.plot()
 
-## Introduction
+nn_periodogram.fap(time, mag, 0.50775)          # score one period (or an array of them)
+```
 
-Time series analysis in astronomical contexts frequently encounters challenges related to signal detection amidst noise, systematic effects, and irregular sampling. This implementation addresses these challenges through a novel architecture that combines neural network methodologies with traditional periodogram approaches. The framework is particularly suitable for short-period detection scenarios where conventional methods exhibit diminished efficacy.
+A low FAP means the light curve folded at that period looks like a real signal.
+Folding at twice the true period also gives a coherent curve and scores about
+the same; `periodogram()` reports the shorter period in that case and says so
+in `p.note`.
 
-### Key Methodological Components
-
-- **Two-Stage Periodogram Framework**: Employs primary and complementary period ranges to enhance detection sensitivity
-- **Neural Network Integration**: Applies machine learning techniques for improved statistical rigour in false alarm probability estimation
-- **Multi-Method Analytical Approach**: Implements chunk-based, sliding window, and subtraction methodologies
-- **Automated Parameter Optimisation**: Provides mathematically justified parameter selection for period grid density and range determination
-
-## Mathematical Motivation and Justification
-
-### Theoretical Foundation
-
-The two-stage approach is mathematically motivated by the limitations inherent in conventional periodogram analyses when applied to complex time series data. Traditional methods often suffer from aliasing effects, harmonics, and systematic noise that can obscure legitimate periodicity signals.
-
-The theoretical framework underpinning this implementation addresses these limitations through:
-
-1. **Complementary Period Range Analysis**: The mathematical relationship between a period of interest (P) and its potential aliases can be expressed as:
-
-   ```
-   1/P_alias = 1/P + k*1/P_sampling
-   ```
-
-   where k is an integer and P_sampling represents the characteristic sampling frequency. By analysing complementary period ranges, we effectively account for these aliasing relationships.
-
-2. **Period Grid Optimisation**: The density of the period grid is derived:
-
-The software automatically calculates an optimal period grid based on:
-- The observational time span
-- Dynamic frequency resolution derived from the data characteristics
-- Oversampling factors for enhanced resolution around expected signals
-- Mathematical justification for period density derived from signal characteristics
-
-3. **Statistical Rigour via Neural Networks**: The neural network approach provides a robust estimation of false alarm probabilities through a non-parametric methodology that adapts to the characteristics of the input data, addressing limitations in traditional FAP calculations that often assume specific noise distributions.
-
-### Empirical Validation
-
-The efficacy of this approach has been empirically validated through extensive testing on simulated and real astronomical time series data. The two-stage approach consistently demonstrates enhanced sensitivity to weak periodic signals compared to single-stage methodologies, particularly in datasets with irregular sampling or systematic noise components.
-
-## Installation
-
-### Prerequisites
-
-- Python 3.6 or higher
-- Pip package manager
-
-### Standard Installation
+## Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/nialljmiller/NN_Periodogram.git
-cd NN_Periodogram
-
-# Execute the installation script (automatically downloads model files)
-bash install.sh
+pip install git+https://github.com/nialljmiller/NN_Periodogram
 ```
 
-### Manual Installation
+Model weights download on first use to `~/.cache/nn_periodogram` (override with
+`NN_PERIODOGRAM_CACHE`) from the GitHub release, falling back to
+data.nialljmiller.com, and are checked against a SHA-256 before use. They are
+also archived on Zenodo. Runs on CUDA, Apple MPS or CPU.
 
-For environments requiring manual installation:
+## Models
 
-```bash
-# Clone the repository
-git clone https://github.com/nialljmiller/NN_Periodogram.git
-cd NN_Periodogram
+| name | what | size |
+|---|---|---|
+| `legacy-2022` | The original NN_FAP network (14 × GRU-1024), ported exactly from Keras. Same outputs as the 2022 TensorFlow model to 1e-5. | 343 MB |
+| `periods-v1` | Circular 1-D CNN over a 64-bin phase profile, trained on PRIMVS (VVV) light curves and injected signals. | 3 MB |
 
-# Install the package with model download
-python setup.py download_model
-python setup.py install
+Choose with `model=`. Benchmark: see `training/` and the results table below.
 
-# Alternative: development mode installation
-pip install -e .
-python setup.py download_model
-```
+## How the models are trained and tested
 
-### Direct Installation from GitHub
-
-```bash
-pip install git+https://github.com/nialljmiller/NN_Periodogram.git
-```
-
-**Note:** Direct GitHub installation requires manual acquisition of model files:
-
-```bash
-# Download and extract model files
-wget https://nialljmiller.com/projects/FAP/model.tar.gz
-tar -xzf model.tar.gz
-mv model NN_FAP/model
-```
-
-## Implementation
-
-### Configuration Parameters
-
-The software utilises an `inlist.txt` configuration file with the following parameter categories:
-
-```
-# Input/output parameters
-input_file=detections.csv  # Path to input file (required)
-output_dir=./results       # Directory for output files
-output_prefix=periodogram  # Prefix for output filenames
-
-# Data parameters
-time_col=None              # Column name for time values (None for auto-detection)
-flux_col=None              # Column name for flux values (None for auto-detection)
-error_col=None             # Column name for error values (None for auto-detection)
-file_format=None           # File format: csv, fits, txt, or None for auto-detection
-normalise=True             # Normalise flux by median
-remove_outliers=True       # Remove outliers using sigma clipping
-sigma=5.0                  # Sigma threshold for outlier removal
-
-# Period search parameters
-period_min=0.01            # Minimum period to search (days)
-period_max=10.0            # Maximum period to search (days)
-n_periods=1000000          # Number of periods to sample
-oversample_factor=10       # Oversampling factor for period grid
-use_complementary=True     # Use complementary period range for method comparison
-
-# NN_FAP parameters
-nn_fap_model_path=NN_FAP/model/  # Path to NN_FAP model directory (required)
-window_size=200            # Size of each window for sliding window method
-chunk_size=200             # Size of each chunk for chunk method
-step_size=50               # Step size between windows
-n_workers=None             # Number of worker processes (None for auto)
-
-# Plotting parameters
-plot_log_scale=True        # Use logarithmic scale for period axes in plots
-```
-
-### Analytical Methodologies
-
-#### Chunk Method
-This approach segments the time series into non-overlapping chunks, analysing each independently. The results are subsequently averaged to produce a robust periodogram. This technique effectively mitigates the influence of systematic errors and long-term trends in the dataset.
-
-#### Sliding Window Method
-In contrast to the chunk method, the sliding window methodology employs overlapping windows that traverse the time series. This approach provides enhanced sensitivity to signals that might be positioned at chunk boundaries in the alternative method.
-
-#### Subtraction Method
-This innovative approach enhances signal detection in specific period ranges by subtracting the complementary periodogram from the primary periodogram. This procedure effectively isolates signals of interest from background noise and systematic effects.
-
-## Output and Visualisation
-
-For each analysis, the following files are generated:
-
-- **periodogram_[filename].png**: Comprehensive periodogram visualisation displaying all methodologies
-- **periodogram_[filename]_folded_chunk_method.png**: Phase-folded light curve for the optimal period determined by the chunk method
-- **periodogram_[filename]_folded_sliding_window_method.png**: Phase-folded light curve for the optimal period determined by the sliding window method
-- **periodogram_[filename]_folded_subtraction_method.png**: Phase-folded light curve for the optimal period determined by the subtraction method
-- **periodogram_[filename]_results.json**: JSON file containing analytical results and optimal periods
-
-## Technical Implementation Details
-
-### Two-Stage Methodological Framework
-
-The two-stage approach functions as follows:
-
-1. **Primary Periodogram**: Focuses on the user-specified period range of interest, employing the sliding window method
-2. **Complementary Periodogram**: Samples the complementary period range to capture harmonics and aliases, utilising the chunk method
-3. **Subtraction Method**: Enhances signal detection by subtracting the complementary periodogram from the primary periodogram
-
-This approach demonstrates particular efficacy for:
-- Detecting weak signals in high-noise datasets
-- Distinguishing genuine periods from aliasing effects
-- Handling datasets with systematic errors or sampling gaps
-
-### Period Grid Optimisation
-
-The software automatically calculates an optimal period grid based on:
-- The observational time span
-- Nyquist frequency considerations
-- Oversampling factors for enhanced resolution around expected signals
-- Mathematical justification for period density derived from signal characteristics
-
-## Documentation
-
-- [JOSS Paper (html)](paper.md) - Journal of Open Source Software submission
-- [JOSS Paper (auto rendered pdf)](paper.pdf) - Journal of Open Source Software submission
-
-## Contributing
-
-Academic and technical contributions are welcomed. Please submit Pull Requests with appropriate documentation and test cases.
-
-## Licence
-
-This project is licenced under the MIT Licence - see the LICENSE file for details.
-
-## Acknowledgements
-
-- This implementation builds upon and extends the functionality of the NN_FAP package
-- We acknowledge the valuable feedback and suggestions from the astronomical time series analysis community
+Labels never come from an NN FAP (PRIMVS's `best_fap` is the 2022 network's
+output). Real positives are PRIMVS stars whose LS, PDM and CE periods agree;
+injections put sines, RR Lyrae-like, eclipsing and random Fourier signals into
+real VVV light curves of quiet stars; negatives are quiet stars, wrong periods,
+nearby incoherent periods and daily aliases. The benchmark is a full
+periodogram search on PRIMVS stars matched to ASAS-SN, scored against the
+ASAS-SN period, none of which are used in training. `training/manifest.json`
+records every selection rule, seed and split.
 
 ## Citation
 
-If you utilise this software in your research, please cite:
-
-```
-@software{NN_Periodogram,
-  author       = {Miller, Niall},
-  title        = {NN\_Periodogram: Flexible Two-Stage Neural Network Periodogram Analyser},
-  year         = {2025},
-  url          = {https://github.com/username/NN_Periodogram}
-}
-```
+Miller et al. — NN_FAP (2022) and NN_Periodogram (2026). See `CITATION.cff`.

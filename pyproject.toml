@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nn-periodogram"
+version = "0.1.0"
+description = "Neural-network false-alarm probabilities and periodograms for astronomical time series"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Niall J. Miller", email = "niall.j.miller@gmail.com"}]
+requires-python = ">=3.9"
+dependencies = ["numpy", "torch>=2.0", "scikit-learn"]
+
+[project.optional-dependencies]
+plot = ["matplotlib"]
+convert = ["h5py"]
+test = ["pytest", "h5py"]
+
+[project.urls]
+Homepage = "https://nialljmiller.com/projects/NN_Periodogram/"
+Source = "https://github.com/nialljmiller/NN_Periodogram"
+
+[tool.setuptools.packages.find]
+include = ["nn_periodogram*"]
