@@ -100,7 +100,7 @@ def scan_quiet(args):
         files = list(Path(folder).iterdir())
     except OSError:
         return out
-    for f in rng.sample(files, min(40, len(files))):
+    for f in rng.sample(files, min(400, len(files))):
         try:
             sid = int(f.stem)
         except ValueError:
@@ -110,7 +110,8 @@ def scan_quiet(args):
         t, m, e = read_ks(f)
         if len(t) < MIN_POINTS:
             continue
-        if np.mean(((m - np.median(m)) / e) ** 2) < 2.0:
+        # VVV's quoted errors are underestimated, so judge scatter relative to them robustly
+        if 1.4826 * np.median(np.abs(m - np.median(m))) < 1.5 * np.median(e):
             out.append((sid, t, m, e, {}))
     return out
 
@@ -223,7 +224,7 @@ def main():
                              "periods within 2% of 1, 1/2, 1/3, 2 d dropped; amplitude > 3 x mean error; "
                              f"class cap {CLASS_CAP}; verified by verify_periods.py (see its docstring)"),
                "test_rule": "ASAS-SN matched, truth = ASAS-SN period, not filtered",
-               "quiet_rule": "not in PRIMVS_P or ASAS-SN set, mean ((m - median)/err)^2 < 2",
+               "quiet_rule": "not in PRIMVS_P or ASAS-SN set, 1.4826 MAD < 1.5 x median quoted error",
                "split_rule": "sha1(sourceid) % 100: <10 test, <20 val, else train",
                "class_candidates": class_counts, "counts": counts},
               open(out / "manifest.json", "w"), indent=2)

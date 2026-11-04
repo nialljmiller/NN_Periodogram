@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Train PeriodsNet on the shards from build_dataset.py (run on cirrus's GPU).
+"""Train PeriodsNet on the shards from build_dataset.py (run on windybox's 3070 Ti).
+
+Light curves are used whole, from 10 to 10,000+ points: batches are padded to
+the longest one with a mask. Half the time a light curve is randomly thinned to
+10..all points so the model learns how confidence should grow with data.
 
 Each batch is built on the fly, half positives and half negatives:
   * real stars folded at their agreed period (with jitter well inside 1/T);
@@ -26,16 +30,15 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from nn_periodogram.features import binned_profile, robust_normalise  # noqa: E402
+from nn_periodogram.features import binned_profile, global_features, robust_normalise  # noqa: E402
 from nn_periodogram.models import PeriodsNet  # noqa: E402
 
-L = 512            # max points per light curve in a batch (random subset beyond that)
 F_MAX = 20.0       # highest trial frequency, 1/day
 
 
 class Shard:
     def __init__(self, path, split):
-        d = np.load(f"{path}.npz")
+        d = dict(np.load(f"{path}.npz"))  # load arrays once: indexing an NpzFile re-reads the whole array
         meta = json.load(open(f"{path}_meta.json"))
         periods = {i: r.get("period", np.nan) for i, r in enumerate(meta)}
         vpath = Path(f"{path}_verified.json")
@@ -55,14 +58,24 @@ class Shard:
         return len(self.t)
 
 
-def pad(rows, rng):
-    """List of 1-D arrays -> (B, L) array + mask, random subset if longer than L."""
+def pad(rows):
+    """List of 1-D arrays -> (B, L) array + mask, L = the longest row. No points are dropped."""
+    L = max(len(r) for r in rows)
     out = np.zeros((len(rows), L)); w = np.zeros((len(rows), L))
     for k, r in enumerate(rows):
-        if len(r) > L:
-            r = r[np.sort(rng.choice(len(r), L, replace=False))]
         out[k, :len(r)] = r; w[k, :len(r)] = 1
     return out, w
+
+
+def thin(t, m, e, rng, min_points=10):
+    """Augmentation: half the time keep a random subset of 10..all points (log-uniform),
+    so the model sees each star at many data volumes."""
+    n = len(t)
+    if n <= min_points or rng.uniform() < 0.5:
+        return t, m, e
+    k = int(round(math.exp(rng.uniform(math.log(min_points), math.log(n)))))
+    keep = np.sort(rng.choice(n, k, replace=False))
+    return t[keep], m[keep], e[keep]
 
 
 def signal(shape, phase, rng):
@@ -104,32 +117,72 @@ def negative_freq(f_true, span, rng):
     return 1.234
 
 
-def batch(real, quiet, B, rng, device):
-    times, mags, freqs, labels = [], [], [], []
+def synthetic_noise(t, e, rng):
+    """Noise on a real cadence: white noise from the quoted errors, plus (sometimes) red noise,
+    a slow trend and outliers -- the things that fool periodograms."""
+    m = rng.normal(0, e)
+    kind = rng.uniform()
+    if kind < 0.25:                                     # random walk (red noise) on the time sampling
+        steps = rng.normal(0, 1, len(t)) * np.sqrt(np.diff(t, prepend=t[0]) / max(np.ptp(t), 1e-9))
+        m = m + np.cumsum(steps) * np.median(e) * math.exp(rng.uniform(0, math.log(10)))
+    elif kind < 0.4:                                    # slow polynomial trend
+        x = (t - t.mean()) / max(np.ptp(t), 1e-9)
+        m = m + np.polyval(rng.normal(0, 1, 3), x) * np.median(e) * rng.uniform(1, 10)
+    if rng.uniform() < 0.2:                             # outliers
+        k = rng.random(len(t)) < rng.uniform(0.01, 0.05)
+        m = m + k * rng.normal(0, 10 * np.median(e), len(t))
+    return m
+
+
+def inject(t, m, rng):
+    """Add a known periodic signal; returns new mags and its frequency."""
+    span = np.ptp(t)
+    f_true = math.exp(rng.uniform(math.log(3 / span), math.log(F_MAX)))
+    sig = 1.4826 * np.median(np.abs(m - np.median(m))) or 0.01
+    amp = sig * math.exp(rng.uniform(math.log(0.5), math.log(20)))
+    return m + amp * signal(rng.choice(["sine", "rr", "eb", "fourier"]), (t * f_true) % 1, rng), f_true
+
+
+def batch(reals, quiet, B, rng, device):
+    """Mix per example (positives ~half):
+      35%  real variable from any survey, at its verified period or a wrong one
+      30%  signal injected into a quiet VVV star (real noise and systematics)
+      20%  signal injected into synthetic noise on the cadence/errors of a random star
+           from any survey (Kepler, Gaia, OGLE, ... sampling)
+      15%  pure noise (quiet star or synthetic red noise / trend / outliers): negatives only
+    """
+    times, mags, errs, freqs, labels = [], [], [], [], []
     for _ in range(B):
         positive = rng.uniform() < 0.5
         src = rng.uniform()
-        if src < 0.4:                                   # real variable
-            i = rng.integers(len(real)); t, m = real.t[i], real.m[i]; f_true = 1 / real.period[i]
-        elif src < 0.8:                                 # injection into a quiet star
-            i = rng.integers(len(quiet)); t, m = quiet.t[i], quiet.m[i].astype(float)
-            span = np.ptp(t)
-            f_true = math.exp(rng.uniform(math.log(3 / span), math.log(F_MAX)))
-            sig = np.std(m) if np.std(m) > 0 else 0.01
-            amp = sig * math.exp(rng.uniform(math.log(0.5), math.log(20)))
-            m = m + amp * signal(rng.choice(["sine", "rr", "eb", "fourier"]), (t * f_true) % 1, rng)
-        else:                                           # quiet star: negatives only
-            i = rng.integers(len(quiet)); t, m = quiet.t[i], quiet.m[i]; f_true = np.nan
-            positive = False
+        if src < 0.35:
+            real = reals[rng.integers(len(reals))]
+            i = rng.integers(len(real)); t, m, e = real.t[i], real.m[i], real.e[i]; f_true = 1 / real.period[i]
+        elif src < 0.65:
+            i = rng.integers(len(quiet)); t, e = quiet.t[i], quiet.e[i]
+            m, f_true = inject(t, quiet.m[i].astype(float), rng)
+        elif src < 0.85:
+            real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
+            t, e = real.t[i], np.asarray(real.e[i], float)
+            m, f_true = inject(t, synthetic_noise(t, e, rng), rng)
+        else:
+            positive, f_true = False, np.nan
+            if rng.uniform() < 0.5:
+                i = rng.integers(len(quiet)); t, m, e = quiet.t[i], quiet.m[i], quiet.e[i]
+            else:
+                real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
+                t, e = real.t[i], np.asarray(real.e[i], float); m = synthetic_noise(t, e, rng)
         span = np.ptp(t)
         f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng)
-        times.append(t); mags.append(np.asarray(m, float)); freqs.append(f); labels.append(float(positive))
-    T, w = pad(times, rng); M, _ = pad(mags, rng)
+        t, m, e = thin(np.asarray(t), np.asarray(m, float), np.asarray(e, float), rng)
+        times.append(t); mags.append(m); errs.append(e); freqs.append(f); labels.append(float(positive))
+    T, w = pad(times); M, _ = pad(mags); E, _ = pad(errs)
     phase = np.mod(T * np.array(freqs)[:, None], 1.0)           # float64 on the CPU
     w_t = torch.tensor(w, dtype=torch.float32, device=device)
-    z = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device), w_t)
-    x = binned_profile(torch.tensor(phase, dtype=torch.float32, device=device), z, w_t)
-    return x, torch.tensor(labels, device=device)
+    z, ze = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device),
+                             torch.tensor(np.where(w > 0, E, 1.0), dtype=torch.float32, device=device), w_t)
+    x = binned_profile(torch.tensor(phase, dtype=torch.float32, device=device), z, ze, w_t)
+    return x, global_features(z, ze, w_t), torch.tensor(labels, device=device)
 
 
 class ThermalGuard:
@@ -155,15 +208,23 @@ class ThermalGuard:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--real", nargs="+", default=["auto"],
+                    help="shards of verified real variables; 'auto' = every shard with a *_verified.json")
+    ap.add_argument("--quiet", default="vvv_quiet")
     ap.add_argument("--steps", type=int, default=60000); ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=2e-3); ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(a.seed); rng = np.random.default_rng(a.seed)
-    tr_real, tr_quiet = Shard(f"{a.data}/real", "train"), Shard(f"{a.data}/quiet", "train")
-    va_real, va_quiet = Shard(f"{a.data}/real", "val"), Shard(f"{a.data}/quiet", "val")
-    print(f"train: {len(tr_real)} real, {len(tr_quiet)} quiet; val: {len(va_real)} real, {len(va_quiet)} quiet", flush=True)
+    if a.real == ["auto"]:
+        a.real = sorted(p.name[:-len("_verified.json")] for p in Path(a.data).glob("*_verified.json")
+                        if "asassn" not in p.name)               # the ASAS-SN-matched VVV stars are the benchmark
+    tr_real = [Shard(f"{a.data}/{r}", "train") for r in a.real]
+    va_real = [Shard(f"{a.data}/{r}", "val") for r in a.real]
+    tr_quiet, va_quiet = Shard(f"{a.data}/{a.quiet}", "train"), Shard(f"{a.data}/{a.quiet}", "val")
+    print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
+          "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
     model = PeriodsNet().to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
@@ -176,14 +237,14 @@ def main():
     for step in range(1, a.steps + 1):
         guard.check()
         model.train()
-        x, y = batch(tr_real, tr_quiet, a.batch, rng, device)
-        loss = loss_fn(model.logits(x), y)
+        x, g, y = batch(tr_real, tr_quiet, a.batch, rng, device)
+        loss = loss_fn(model.logits(x, g), y)
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if step % 1000 == 0 or step == a.steps:
             model.eval()
             with torch.no_grad():
-                vl = np.mean([loss_fn(model.logits(vx), vy).item() for vx, vy in val])
-                acc = np.mean([((model(vx) > 0.5).float() == vy).float().mean().item() for vx, vy in val])
+                vl = np.mean([loss_fn(model.logits(vx, vg), vy).item() for vx, vg, vy in val])
+                acc = np.mean([((model(vx, vg) > 0.5).float() == vy).float().mean().item() for vx, vg, vy in val])
             log.append({"step": step, "train_loss": loss.item(), "val_loss": vl, "val_acc": acc})
             print(f"step {step}  train {loss.item():.4f}  val {vl:.4f}  acc {acc:.4f}  {time.time() - t0:.0f}s", flush=True)
             if vl < best:

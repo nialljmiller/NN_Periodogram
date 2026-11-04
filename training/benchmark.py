@@ -38,7 +38,7 @@ def main():
     ap.add_argument("--n", type=int, default=200); ap.add_argument("--fmax", type=float, default=5.0)
     ap.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()
-    d = np.load(f"{a.data}/asassn.npz"); meta = json.load(open(f"{a.data}/asassn_meta.json"))
+    d = dict(np.load(f"{a.data}/asassn.npz")); meta = json.load(open(f"{a.data}/asassn_meta.json"))
     off = d["offsets"]
     idx = np.random.default_rng(a.seed).choice(len(meta), min(a.n, len(meta)), replace=False)
     rows, t0 = [], time.time()
