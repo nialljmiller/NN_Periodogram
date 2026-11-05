@@ -21,7 +21,7 @@ def gls(t, y, dy, freqs, device, chunk=None):
     wt = torch.tensor(w, dtype=torch.float32, device=device)
     yt = torch.tensor(y, dtype=torch.float32, device=device)
     yy = float((w * y * y).sum())
-    chunk = chunk or max(16, 2 ** 24 // len(t))         # bound memory for long light curves
+    chunk = chunk or max(1, 2 ** 23 // len(t))          # ~2^23 phases per pass: bounded memory at any length
     out = []
     for s in range(0, len(freqs), chunk):
         f = torch.tensor(freqs[s:s + chunk], dtype=torch.float64, device=pdev)
@@ -44,7 +44,7 @@ def pdm_theta(t, y, freqs, device, bins=(16, 32)):
     yt = torch.tensor(y - y.mean(), dtype=torch.float32, device=device)
     total = float((yt ** 2).mean())
     best = None
-    step = max(256, 2 ** 23 // len(t))
+    step = max(1, 2 ** 23 // len(t))                   # bounded memory at any length
     for s in range(0, len(freqs), step):
         f = torch.tensor(freqs[s:s + step], dtype=torch.float64, device=pdev)
         ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float().to(device)

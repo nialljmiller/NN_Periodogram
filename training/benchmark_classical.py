@@ -18,8 +18,9 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmark import verdict  # noqa: E402
-from verify_periods import gls, pdm_theta  # noqa: E402
+from nn_periodogram.classical import gls, pdm_theta  # noqa: E402
 
 
 def search(t, m, e, method, fmax, device, oversample=3.0, n_peaks=5, refine=20):
