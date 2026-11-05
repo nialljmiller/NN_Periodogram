@@ -69,10 +69,18 @@ def pad(rows):
     return out, w
 
 
+MAX_TRAIN_POINTS = 5000
+
+
 def thin(t, m, e, rng, min_points=10):
     """Augmentation: half the time keep a random subset of 10..all points (log-uniform),
-    so the model sees each star at many data volumes."""
+    so the model sees each star at many data volumes. Light curves longer than
+    MAX_TRAIN_POINTS (Kepler, TESS) get a fresh random subset of that size each draw,
+    to bound GPU memory in a padded batch; inference always uses every point."""
     n = len(t)
+    if n > MAX_TRAIN_POINTS:
+        keep = np.sort(rng.choice(n, MAX_TRAIN_POINTS, replace=False))
+        t, m, e, n = t[keep], m[keep], e[keep], MAX_TRAIN_POINTS
     if n <= min_points or rng.uniform() < 0.5:
         return t, m, e
     k = int(round(math.exp(rng.uniform(math.log(min_points), math.log(n)))))

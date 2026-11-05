@@ -6,6 +6,7 @@ import numpy as np
 import torch
 
 from . import hub
+from .classical import gls, pdm_theta
 from .features import (binned_profile, channels_from_phase, fold_phase, global_features, prepare,
                        robust_normalise)
 
@@ -108,7 +109,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
-                prefer_shorter=None,
+                prefer_shorter=None, method=None, n_candidates=10,
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """NN periodogram: FAP at every trial frequency, then a finer pass around the best peaks.
 
@@ -118,12 +119,16 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     period is reported and `note` says so.
     """
     device = torch.device(device) if device else hub.default_device()
+    net = _model(model, device, weights)
+    if method is None:          # the 2022 network only works as an exhaustive search
+        method = "full" if getattr(net, "input_kind", "legacy") == "legacy" else "hybrid"
+    if method == "hybrid":
+        return _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter)
     t, m = np.asarray(time, float), np.asarray(mag, float)
     span = np.ptp(np.asarray(time, float)[np.isfinite(time)])
     df = 1.0 / (oversample * span)
     fmin = fmin or 2.0 / span
     freqs = np.arange(fmin, fmax, df)
-    net = _model(model, device, weights)
     f_ap = _score(t, m, freqs, net, device, batch, exact, err)
 
     # local minima, best first, separated by at least 5 grid steps
@@ -153,3 +158,54 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
         best, best_f = half[0]
     return Periodogram(freqs, f_ap, peaks, best, best_f, note)
+
+
+def _top(score, n, sep=5):
+    """Indices of the n highest values, at least `sep` grid steps apart."""
+    picked = []
+    for i in np.argsort(score)[::-1]:
+        if all(abs(i - j) > sep for j in picked):
+            picked.append(int(i))
+        if len(picked) == n:
+            break
+    return picked
+
+
+def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter):
+    """Classical periodograms propose, the network decides.
+
+    Lomb-Scargle and phase dispersion run over the full grid on the GPU (cheap).
+    Their best n_candidates peaks each, refined by the same method, plus 2x, 1/2x,
+    3x and 1/3x of every one, are scored by the network; the lowest FAP wins.
+    About a hundred network evaluations per star instead of one per grid point.
+    """
+    t, m = np.asarray(time, float), np.asarray(mag, float)
+    e = estimate_errors(t, m) if err is None else np.asarray(err, float)
+    ok = np.isfinite(t) & np.isfinite(m) & np.isfinite(e) & (e > 0)
+    t, m, e = t[ok], m[ok], e[ok]
+    span = np.ptp(t)
+    df = 1.0 / (oversample * span)
+    fmin = fmin or 2.0 / span
+    freqs = np.arange(fmin, fmax, df)
+    ls = gls(t, m, e, freqs, device)
+    pdm = -pdm_theta(t, m, freqs, device)
+    cands = []
+    for score, fn in ((ls, lambda f: gls(t, m, e, f, device)), (pdm, lambda f: -pdm_theta(t, m, f, device))):
+        for i in _top(score, n_candidates):
+            fine = np.linspace(freqs[i] - df, freqs[i] + df, 41)
+            cands.append(fine[int(np.argmax(fn(fine)))])
+    cands = np.array([c * r for c in cands for r in (1.0, 2.0, 0.5, 3.0, 1 / 3)])
+    cands = np.unique(np.round(cands[(cands >= fmin) & (cands <= fmax)], 12))
+    f_ap = _score(t, m, cands, net, device, batch, False, e)
+    order = np.argsort(f_ap)
+    peaks = [(1.0 / cands[i], float(f_ap[i])) for i in order[:10]]
+    best, best_f = peaks[0]
+    note = ""
+    if prefer_shorter is None:
+        prefer_shorter = True
+    half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
+    if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
+        note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
+        best, best_f = half[0]
+    o = np.argsort(cands)
+    return Periodogram(cands[o], f_ap[o], peaks, best, best_f, note)

@@ -23,11 +23,15 @@ label is always a fold our own analysis supports; method and ratio are recorded.
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from nn_periodogram.classical import gls, pdm_theta  # noqa: E402
 
 P_MAX, F_MAX = 300.0, 20.0
 RATIOS = (1.0, 2.0, 0.5)
@@ -52,57 +56,9 @@ class ThermalGuard:
         self.next = time.time() + 2
 
 
-def gls(t, y, dy, freqs, device, chunk=None):
-    """Generalised Lomb-Scargle power (standard normalisation, floating mean)."""
-    w = 1.0 / dy ** 2
-    w = w / w.sum()
-    y = y - (w * y).sum()
-    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device)
-    wt = torch.tensor(w, dtype=torch.float32, device=device)
-    yt = torch.tensor(y, dtype=torch.float32, device=device)
-    yy = float((w * y * y).sum())
-    chunk = chunk or max(16, 2 ** 24 // len(t))         # bound memory for long light curves
-    out = []
-    for s in range(0, len(freqs), chunk):
-        f = torch.tensor(freqs[s:s + chunk], dtype=torch.float64, device=device)
-        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float() * (2 * np.pi)
-        c, sn = torch.cos(ph), torch.sin(ph)
-        C, S = c @ wt, sn @ wt
-        YC, YS = c @ (wt * yt), sn @ (wt * yt)
-        CC = (c * c) @ wt - C * C
-        SS = 1.0 - (c * c) @ wt - S * S
-        CS = (c * sn) @ wt - C * S
-        D = CC * SS - CS * CS
-        out.append(((SS * YC ** 2 + CC * YS ** 2 - 2 * CS * YC * YS) / (yy * D)).cpu().numpy())
-    return np.concatenate(out)
-
-
 def baluev(z, t, y, dy):
     from astropy.timeseries.periodograms.lombscargle._statistics import false_alarm_probability
     return float(false_alarm_probability(z, F_MAX, t, y, dy, normalization="standard", method="baluev"))
-
-
-def pdm_theta(t, y, freqs, device, bins=(16, 32)):
-    """Phase dispersion at each frequency: within-bin variance / total variance (lower = tighter fold)."""
-    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device)
-    yt = torch.tensor(y - y.mean(), dtype=torch.float32, device=device)
-    total = float((yt ** 2).mean())
-    best = None
-    step = max(256, 2 ** 23 // len(t))
-    for s in range(0, len(freqs), step):
-        f = torch.tensor(freqs[s:s + step], dtype=torch.float64, device=device)
-        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float()
-        thetas = []
-        for nb in bins:
-            idx = torch.clamp((ph * nb).long(), 0, nb - 1)
-            n = torch.zeros(len(f), nb, device=device).scatter_add_(1, idx, torch.ones_like(ph))
-            s1 = torch.zeros_like(n).scatter_add_(1, idx, yt.expand_as(ph))
-            s2 = torch.zeros_like(n).scatter_add_(1, idx, (yt ** 2).expand_as(ph))
-            within = (s2 - s1 ** 2 / n.clamp_min(1)).sum(1) / len(t)
-            thetas.append(within / total)
-        th = torch.minimum(*thetas).cpu().numpy()
-        best = th if best is None else np.concatenate([best, th])
-    return best
 
 
 def pdm_check(t, y, cands, device, n_random=2000, seed=0):

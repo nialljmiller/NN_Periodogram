@@ -37,17 +37,22 @@ def main():
     ap.add_argument("--weights", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--n", type=int, default=200); ap.add_argument("--fmax", type=float, default=5.0)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--method", choices=["full", "hybrid"], default=None)
     a = ap.parse_args()
     d = dict(np.load(f"{a.data}/asassn.npz")); meta = json.load(open(f"{a.data}/asassn_meta.json"))
     off = d["offsets"]
     idx = np.random.default_rng(a.seed).choice(len(meta), min(a.n, len(meta)), replace=False)
     rows, t0 = [], time.time()
+    t_search = 0.0
     for k, i in enumerate(idx):
         t, m = d["time"][off[i]:off[i + 1]], d["mag"][off[i]:off[i + 1]]
         p_true = meta[i]["period"]
         if p_true > np.ptp(t) / 3:
             continue
-        res = nn_periodogram.periodogram(t, m, fmax=a.fmax, model=a.model, weights=a.weights, device="cuda")
+        ts = time.time()
+        res = nn_periodogram.periodogram(t, m, fmax=a.fmax, model=a.model, weights=a.weights, device="cuda",
+                                         method=a.method, err=d["err"][off[i]:off[i + 1]] if a.method == "hybrid" else None)
+        t_search += time.time() - ts
         rows.append({"sourceid": meta[i]["sourceid"], "p_true": p_true, "p": res.best_period,
                      "fap": res.best_fap, "n": len(t), "verdict": verdict(res.best_period, p_true),
                      "aliased_note": bool(res.note)})
@@ -56,7 +61,7 @@ def main():
     json.dump(rows, open(a.out, "w"))
     v = [r["verdict"] for r in rows]
     print({x: f"{v.count(x)} ({100 * v.count(x) / len(v):.1f}%)" for x in ("correct", "harmonic", "wrong")},
-          f"of {len(v)} stars")
+          f"of {len(v)} stars; search time {t_search:.0f}s")
 
 
 if __name__ == "__main__":
