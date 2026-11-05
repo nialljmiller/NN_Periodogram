@@ -179,3 +179,21 @@ def robust_normalise(mag, err, w):
     z = torch.clamp((mag - med) / s, -20, 20)
     ze = torch.clamp(err / s, 1e-3, 20)
     return torch.where(w > 0, z, zero), torch.where(w > 0, ze, zero)
+
+
+def profile_views(t, freqs, z, ze, w, views=(1.0,), device=None):
+    """Binned profiles of the same light curves folded at freqs * r for each r in views.
+
+    t      : (B, L) or (1, L) float64 times (CPU; phase needs double precision)
+    freqs  : (B,) float64 trial frequencies
+    z, ze, w : (B, L) float32 on `device`
+    views=(1.0, 0.5, 2.0) stacks the folds at P, 2P and P/2 side by side, so the
+    network can compare a candidate with its harmonics directly.
+    returns (B, N_PROFILE * len(views), N_BINS)
+    """
+    device = device or z.device
+    out = []
+    for r in views:
+        ph = torch.remainder(t * (freqs[:, None] * r), 1.0).to(device=device, dtype=torch.float32)
+        out.append(binned_profile(ph, z, ze, w))
+    return torch.cat(out, 1)

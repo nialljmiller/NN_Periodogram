@@ -30,10 +30,11 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from nn_periodogram.features import binned_profile, global_features, robust_normalise  # noqa: E402
+from nn_periodogram.features import global_features, profile_views, robust_normalise  # noqa: E402
 from nn_periodogram.models import PeriodsNet  # noqa: E402
 
 F_MAX = 20.0       # highest trial frequency, 1/day
+VIEWS = (1.0,)     # set from --views: folds at f * r for each r
 
 
 class Shard:
@@ -138,6 +139,23 @@ def negative_freq(f_true, span, rng, harmonics=False):
     return 1.234
 
 
+def augment(t, m, e, rng):
+    """Label-preserving views of the same light curve: flip, time reversal, a dropped
+    season, rescaled errors. None of these changes whether (or at what period) it is periodic."""
+    if rng.uniform() < 0.5:
+        m = -m                                              # upside down
+    if rng.uniform() < 0.25:
+        t = t.max() + t.min() - t                           # time reversed
+    if rng.uniform() < 0.2 and np.ptp(t) > 730:             # drop one ~year-long stretch
+        start = rng.uniform(t.min(), t.max() - 365)
+        keep = (t < start) | (t > start + 365)
+        if keep.sum() >= 10:
+            t, m, e = t[keep], m[keep], e[keep]
+    if rng.uniform() < 0.3:
+        e = e * math.exp(rng.uniform(math.log(0.5), math.log(2)))
+    return t, m, e
+
+
 def synthetic_noise(t, e, rng):
     """Noise on a real cadence: white noise from the quoted errors, plus (sometimes) red noise,
     a slow trend and outliers -- the things that fool periodograms."""
@@ -189,7 +207,12 @@ def batch(reals, quiet, B, rng, device):
             m, f_true = inject(t, synthetic_noise(t, e, rng), rng); exact = True
         else:
             positive, f_true, exact = False, np.nan, False
-            if rng.uniform() < 0.5:
+            u = rng.uniform()
+            if u < 0.35:                                    # real light curve, magnitudes shuffled in time:
+                real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
+                t, m, e = real.t[i], real.m[i].copy(), real.e[i].copy()
+                k = rng.permutation(len(m)); m, e = m[k], e[k]          # same cadence and noise, no signal
+            elif u < 0.65:
                 i = rng.integers(len(quiet)); t, m, e = quiet.t[i], quiet.m[i], quiet.e[i]
             else:
                 real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
@@ -197,13 +220,14 @@ def batch(reals, quiet, B, rng, device):
         span = np.ptp(t)
         f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng, exact)
         t, m, e = thin(np.asarray(t), np.asarray(m, float), np.asarray(e, float), rng)
+        t, m, e = augment(t, m, e, rng)
         times.append(t); mags.append(m); errs.append(e); freqs.append(f); labels.append(float(positive))
     T, w = pad(times); M, _ = pad(mags); E, _ = pad(errs)
-    phase = np.mod(T * np.array(freqs)[:, None], 1.0)           # float64 on the CPU
     w_t = torch.tensor(w, dtype=torch.float32, device=device)
     z, ze = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device),
                              torch.tensor(np.where(w > 0, E, 1.0), dtype=torch.float32, device=device), w_t)
-    x = binned_profile(torch.tensor(phase, dtype=torch.float32, device=device), z, ze, w_t)
+    x = profile_views(torch.tensor(T, dtype=torch.float64), torch.tensor(freqs, dtype=torch.float64),
+                      z, ze, w_t, VIEWS, device)
     return x, global_features(z, ze, w_t), torch.tensor(labels, device=device)
 
 
@@ -233,6 +257,8 @@ def main():
     ap.add_argument("--real", nargs="+", default=["auto"],
                     help="shards of verified real variables; 'auto' = every shard with a *_verified.json")
     ap.add_argument("--quiet", default="vvv_quiet")
+    ap.add_argument("--views", type=float, nargs="+", default=[1.0],
+                    help="fold views per candidate; 1 0.5 2 = P with 2P and P/2 side by side")
     ap.add_argument("--steps", type=int, default=60000); ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=2e-3); ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
@@ -248,7 +274,10 @@ def main():
     print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
           "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
-    model = PeriodsNet().to(device)
+    global VIEWS
+    VIEWS = tuple(a.views)
+    json.dump({"views": VIEWS}, open(out / "config.json", "w"))
+    model = PeriodsNet(views=VIEWS).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.steps)
     loss_fn = torch.nn.BCEWithLogitsLoss()

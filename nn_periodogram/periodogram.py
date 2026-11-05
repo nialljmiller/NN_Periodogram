@@ -7,7 +7,7 @@ import torch
 
 from . import hub
 from .classical import gls, pdm_theta
-from .features import (binned_profile, channels_from_phase, fold_phase, global_features, prepare,
+from .features import (channels_from_phase, fold_phase, global_features, prepare, profile_views,
                        robust_normalise)
 
 _MODELS = {}
@@ -59,11 +59,12 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24):
     tt = torch.tensor(t, dtype=torch.float64)
     batch = max(1, min(4096, max_elements // len(t)))     # bound both the point arrays and the network activations
     out = np.empty(len(freqs), np.float32)
+    views = getattr(model, "views", (1.0,))
+    batch = max(1, batch // len(views))
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
-        ph = fold_phase(tt, f).to(device=device, dtype=torch.float32)
         B = len(f)
-        x = binned_profile(ph, z.expand(B, -1), ze.expand(B, -1), w.expand(B, -1))
+        x = profile_views(tt[None, :], f, z.expand(B, -1), ze.expand(B, -1), w.expand(B, -1), views, device)
         out[s:s + B] = 1.0 - model(x, g.expand(B, -1)).float().cpu().numpy()   # P(real) -> FAP
     return out
 
@@ -209,3 +210,43 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
         best, best_f = half[0]
     o = np.argsort(cands)
     return Periodogram(cands[o], f_ap[o], peaks, best, best_f, note)
+
+
+SIDEREAL_DAY = 0.99726957     # days; daily sampling alias is |f +- 1/SIDEREAL_DAY|
+YEAR = 365.25
+
+
+@dataclass
+class PeriodCheck:
+    period: float                                   # the period you asked about
+    best_period: float                              # the period the network prefers
+    best_fap: float
+    relation: str                                   # how best relates to period: "P", "2P", "P/2", "alias +1/d", ...
+    candidates: list = field(default_factory=list)  # [(relation, period, fap)] best first
+
+    def __repr__(self):
+        rows = "\n".join(f"  {r:<12} {p:12.6f} d   FAP {f:.3g}" for r, p, f in self.candidates)
+        return f"PeriodCheck({self.period:.6f} d -> {self.relation} = {self.best_period:.6f} d)\n{rows}"
+
+
+def check_period(time, mag, period, err=None, model="periods-v3", device=None, weights=None):
+    """Is `period` right, or is it really a harmonic or a sampling alias of the true period?
+
+    Scores the period you give (from any method or catalogue) against 2P, P/2, 3P,
+    P/3, 3P/2, 2P/3 and the daily and yearly aliases, and reports the one the
+    network prefers. A few dozen folds: nearly free.
+    """
+    device = torch.device(device) if device else hub.default_device()
+    net = _model(model, device, weights)
+    f0 = 1.0 / period
+    cands = [("P", f0), ("2P", f0 / 2), ("P/2", 2 * f0), ("3P", f0 / 3), ("P/3", 3 * f0),
+             ("3P/2", f0 * 2 / 3), ("2P/3", f0 * 1.5)]
+    for sign in (1, -1):
+        cands.append((f"alias {'+' if sign > 0 else '-'}1/d", abs(f0 + sign / SIDEREAL_DAY)))
+        cands.append((f"alias {'+' if sign > 0 else '-'}1/yr", abs(f0 + sign / YEAR)))
+    cands = [(name, f) for name, f in cands if f > 0]
+    t, m = np.asarray(time, float), np.asarray(mag, float)
+    faps = _score(t, m, np.array([f for _, f in cands]), net, device, 1024, False, err)
+    rows = sorted(((name, 1.0 / f, float(a)) for (name, f), a in zip(cands, faps)), key=lambda r: r[2])
+    best = rows[0]
+    return PeriodCheck(period, best[1], best[2], best[0], rows)

@@ -96,8 +96,12 @@ class PeriodsNet(nn.Module):
     light-curve features (number of points, chi^2, errors). Returns P(fold is a real signal)."""
     input_kind = "binned"
 
-    def __init__(self, n_in=16, n_global=3, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8)):
+    def __init__(self, n_in=16, n_global=3, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8), views=(1.0,)):
         super().__init__()
+        # Folds the model looks at for each candidate frequency f: f * r for r in views.
+        # (1.0, 0.5, 2.0) = the candidate period P with 2P and P/2 side by side.
+        self.views = tuple(views)
+        n_in = 16 * len(self.views)
         self.stem = nn.Sequential(nn.Conv1d(n_in, width, 5, padding=2, padding_mode="circular"),
                                   nn.GroupNorm(8, width), nn.ReLU())
         self.blocks = nn.Sequential(*[_Res(width, d) for d in dilations])

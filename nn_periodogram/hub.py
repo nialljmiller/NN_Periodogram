@@ -9,6 +9,7 @@ import hashlib
 import os
 import shutil
 import urllib.request
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -31,7 +32,14 @@ MODELS = {
         "sha256": None,
         "release": "v0.2.0",
         "build": PeriodsNet,
-        "description": "Circular CNN on a 64-bin phase profile, trained on PRIMVS + injections (2026).",
+        "description": "Circular CNN on a multi-resolution phase profile; VVV + OGLE + injections (2026).",
+    },
+    "periods-v3": {
+        "file": "nn_periodogram_v3.pt",
+        "sha256": None,
+        "release": "v0.2.0",
+        "build": partial(PeriodsNet, views=(1.0, 0.5, 2.0)),
+        "description": "Sees the folds at P, 2P and P/2 side by side; all surveys (2026).",
     },
 }
 DEFAULT = "legacy-2022"
