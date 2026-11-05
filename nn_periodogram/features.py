@@ -175,4 +175,7 @@ def robust_normalise(mag, err, w):
     med = torch.nanmedian(big, dim=1, keepdim=True).values
     s = (torch.nanmedian((big - med).abs(), dim=1, keepdim=True).values * 1.4826).clamp_min(1e-6)
     zero = torch.zeros_like(mag)
-    return torch.where(w > 0, (mag - med) / s, zero), torch.where(w > 0, err / s, zero)
+    # clipped so a single wild point cannot dominate a fold (or the network's normalisation)
+    z = torch.clamp((mag - med) / s, -20, 20)
+    ze = torch.clamp(err / s, 1e-3, 20)
+    return torch.where(w > 0, z, zero), torch.where(w > 0, ze, zero)

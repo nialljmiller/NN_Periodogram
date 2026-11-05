@@ -114,7 +114,8 @@ def pdm_check(t, y, cands, device, n_random=2000, seed=0):
         for r in RATIOS:
             fine = np.linspace(r * fc - 1 / span, r * fc + 1 / span, 201)
             fine = fine[(fine > 1 / P_MAX) & (fine < F_MAX)]
-            grids.append(fine); tags += [r] * len(fine)
+            if len(fine):                                # candidates outside the search range give nothing
+                grids.append(fine); tags += [r] * len(fine)
     if not grids:
         return None
     fine = np.concatenate(grids)

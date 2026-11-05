@@ -83,7 +83,8 @@ class _Res(nn.Module):
         super().__init__()
         self.c1 = nn.Conv1d(c, c, 5, padding=2 * dilation, dilation=dilation, padding_mode="circular")
         self.c2 = nn.Conv1d(c, c, 5, padding=2 * dilation, dilation=dilation, padding_mode="circular")
-        self.n1, self.n2 = nn.BatchNorm1d(c), nn.BatchNorm1d(c)
+        # GroupNorm, not BatchNorm: no running statistics to be thrown off by extreme light curves
+        self.n1, self.n2 = nn.GroupNorm(8, c), nn.GroupNorm(8, c)
 
     def forward(self, x):
         y = torch.relu(self.n1(self.c1(x)))
@@ -98,7 +99,7 @@ class PeriodsNet(nn.Module):
     def __init__(self, n_in=16, n_global=3, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8)):
         super().__init__()
         self.stem = nn.Sequential(nn.Conv1d(n_in, width, 5, padding=2, padding_mode="circular"),
-                                  nn.BatchNorm1d(width), nn.ReLU())
+                                  nn.GroupNorm(8, width), nn.ReLU())
         self.blocks = nn.Sequential(*[_Res(width, d) for d in dilations])
         self.glob = nn.Sequential(nn.Linear(n_global, 32), nn.ReLU())
         self.head = nn.Sequential(nn.Linear(2 * width + 32, 128), nn.ReLU(), nn.Linear(128, 1))
