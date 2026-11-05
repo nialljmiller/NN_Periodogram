@@ -184,7 +184,8 @@ def robust_normalise(mag, err, w):
 def profile_views(t, freqs, z, ze, w, views=(1.0,), device=None):
     """Binned profiles of the same light curves folded at freqs * r for each r in views.
 
-    t      : (B, L) or (1, L) float64 times (CPU; phase needs double precision)
+    t      : (B, L) or (1, L) float64 times (phases are computed in double precision on the
+             device, or on the CPU for Apple MPS, which has no float64)
     freqs  : (B,) float64 trial frequencies
     z, ze, w : (B, L) float32 on `device`
     views=(1.0, 0.5, 2.0) stacks the folds at P, 2P and P/2 side by side, so the
@@ -192,8 +193,16 @@ def profile_views(t, freqs, z, ze, w, views=(1.0,), device=None):
     returns (B, N_PROFILE * len(views), N_BINS)
     """
     device = device or z.device
+    pdev = phase_device(device)
+    t, freqs = t.to(pdev, torch.float64), freqs.to(pdev, torch.float64)
     out = []
     for r in views:
         ph = torch.remainder(t * (freqs[:, None] * r), 1.0).to(device=device, dtype=torch.float32)
         out.append(binned_profile(ph, z, ze, w))
     return torch.cat(out, 1)
+
+
+def phase_device(device):
+    """Where double-precision phases are computed: the device itself, except Apple MPS (no float64)."""
+    device = torch.device(device)
+    return torch.device("cpu") if device.type == "mps" else device

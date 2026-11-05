@@ -8,21 +8,24 @@ frequency over long baselines needs it), the rest in float32.
 import numpy as np
 import torch
 
+from .features import phase_device
+
 
 def gls(t, y, dy, freqs, device, chunk=None):
     """Generalised Lomb-Scargle power (standard normalisation, floating mean)."""
     w = 1.0 / dy ** 2
     w = w / w.sum()
     y = y - (w * y).sum()
-    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device)
+    pdev = phase_device(device)
+    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=pdev)
     wt = torch.tensor(w, dtype=torch.float32, device=device)
     yt = torch.tensor(y, dtype=torch.float32, device=device)
     yy = float((w * y * y).sum())
     chunk = chunk or max(16, 2 ** 24 // len(t))         # bound memory for long light curves
     out = []
     for s in range(0, len(freqs), chunk):
-        f = torch.tensor(freqs[s:s + chunk], dtype=torch.float64, device=device)
-        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float() * (2 * np.pi)
+        f = torch.tensor(freqs[s:s + chunk], dtype=torch.float64, device=pdev)
+        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float().to(device) * (2 * np.pi)
         c, sn = torch.cos(ph), torch.sin(ph)
         C, S = c @ wt, sn @ wt
         YC, YS = c @ (wt * yt), sn @ (wt * yt)
@@ -36,14 +39,15 @@ def gls(t, y, dy, freqs, device, chunk=None):
 
 def pdm_theta(t, y, freqs, device, bins=(16, 32)):
     """Phase dispersion at each frequency: within-bin variance / total variance (lower = tighter fold)."""
-    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device)
+    pdev = phase_device(device)
+    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=pdev)
     yt = torch.tensor(y - y.mean(), dtype=torch.float32, device=device)
     total = float((yt ** 2).mean())
     best = None
     step = max(256, 2 ** 23 // len(t))
     for s in range(0, len(freqs), step):
-        f = torch.tensor(freqs[s:s + step], dtype=torch.float64, device=device)
-        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float()
+        f = torch.tensor(freqs[s:s + step], dtype=torch.float64, device=pdev)
+        ph = torch.remainder(f[:, None] * tt[None, :], 1.0).float().to(device)
         thetas = []
         for nb in bins:
             idx = torch.clamp((ph * nb).long(), 0, nb - 1)
