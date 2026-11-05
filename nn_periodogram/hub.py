@@ -87,10 +87,27 @@ def fetch(name=DEFAULT, path=None):
 def load(name=DEFAULT, path=None, device=None):
     """Build a model and load its weights."""
     info = MODELS[name]
-    model = info["build"]()
     state = torch.load(fetch(name, path), map_location="cpu", weights_only=True)
+    config = {}
+    if "state_dict" in state:            # release files: {"state_dict": ..., "config": {...}}
+        state, config = state["state_dict"], state.get("config", {})
+    if "stem.0.weight" in state:         # PeriodsNet: the views are fixed by the weights' shape
+        n_views = state["stem.0.weight"].shape[1] // 16
+        views = tuple(config.get("views", (1.0, 0.5, 2.0)[:n_views]))
+        model = PeriodsNet(views=views)
+    else:
+        model = info["build"]()
     model.load_state_dict(state)
+    # Search defaults that belong to the weights (e.g. whether ties go to the shorter period)
+    model.prefer_shorter = config.get("prefer_shorter", info.get("prefer_shorter", True))
     return model.eval().to(device or default_device())
+
+
+def package(state_dict_path, out_path, **config):
+    """Wrap a training checkpoint as a release file that carries its own configuration."""
+    state = torch.load(state_dict_path, map_location="cpu", weights_only=True)
+    torch.save({"state_dict": state, "config": config}, out_path)
+    return _sha256(out_path)
 
 
 def default_device():

@@ -160,7 +160,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
-                prefer_shorter=None, method=None, n_candidates=10,
+                prefer_shorter=None, method=None, n_candidates=10, proposers=("ls", "pdm"),
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """Find the period of a light curve.
 
@@ -181,11 +181,15 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
         ``n_peaks`` peaks. Slower, and independent of the classical methods.
     n_candidates : int
         Hybrid: peaks taken from each classical periodogram.
+    proposers : tuple of {"ls", "pdm"}
+        Hybrid: which classical periodograms propose candidates. ``("ls",)`` alone is
+        cheaper still.
     n_peaks, refine : int
         Full: peaks refined, and fine-grid points per side.
     prefer_shorter : bool, optional
         When the best period's half scores within 25% of it, report the half (and say so in
-        ``note``). Default True.
+        ``note``). The default belongs to the model: on for models that cannot see 2P and P/2
+        side by side, off for those that can.
     model, device, batch, weights, exact
         As for :func:`fap`.
 
@@ -198,10 +202,13 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
     time, mag, err, fmin, fmax = _days(time), _plain(mag), _plain(err), _freq(fmin), _freq(fmax)
+    if prefer_shorter is None:
+        prefer_shorter = getattr(net, "prefer_shorter", True)
     if method is None:          # the 2022 network only works as an exhaustive search
         method = "full" if getattr(net, "input_kind", "legacy") == "legacy" else "hybrid"
     if method == "hybrid":
-        return _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter)
+        return _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
+                       proposers)
     t, m = np.asarray(time, float), np.asarray(mag, float)
     span = np.ptp(np.asarray(time, float)[np.isfinite(time)])
     df = 1.0 / (oversample * span)
@@ -229,8 +236,6 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     note = ""
     # A model that cannot tell P from 2P scores them alike; then the shorter of a tied pair is
     # reported (on the benchmark this helps both the 2022 model and periods-v1).
-    if prefer_shorter is None:
-        prefer_shorter = True
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
     if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
@@ -249,7 +254,8 @@ def _top(score, n, sep=5):
     return picked
 
 
-def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter):
+def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
+            proposers=("ls", "pdm")):
     """Classical periodograms propose, the network decides.
 
     Lomb-Scargle and phase dispersion run over the full grid on the GPU (cheap).
@@ -265,11 +271,11 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     df = 1.0 / (oversample * span)
     fmin = fmin or 2.0 / span
     freqs = np.arange(fmin, fmax, df)
-    ls = gls(t, m, e, freqs, device)
-    pdm = -pdm_theta(t, m, freqs, device)
+    methods = {"ls": lambda f: gls(t, m, e, f, device), "pdm": lambda f: -pdm_theta(t, m, f, device)}
     cands = []
-    for score, fn in ((ls, lambda f: gls(t, m, e, f, device)), (pdm, lambda f: -pdm_theta(t, m, f, device))):
-        for i in _top(score, n_candidates):
+    for name in proposers:
+        fn = methods[name]
+        for i in _top(fn(freqs), n_candidates):
             fine = np.linspace(freqs[i] - df, freqs[i] + df, 41)
             cands.append(fine[int(np.argmax(fn(fine)))])
     cands = np.array([c * r for c in cands for r in (1.0, 2.0, 0.5, 3.0, 1 / 3)])
@@ -279,8 +285,6 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     peaks = [(1.0 / cands[i], float(f_ap[i])) for i in order[:10]]
     best, best_f = peaks[0]
     note = ""
-    if prefer_shorter is None:
-        prefer_shorter = True
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
     if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
@@ -306,7 +310,7 @@ class PeriodCheck:
         return f"PeriodCheck({self.period:.6f} d -> {self.relation} = {self.best_period:.6f} d)\n{rows}"
 
 
-def check_period(time, mag, period, err=None, model="periods-v3", device=None, weights=None):
+def check_period(time, mag, period, err=None, model=hub.DEFAULT, device=None, weights=None):
     """Check a known period: is it right, a harmonic, or a sampling alias?
 
     Scores ``period`` (from any method or catalogue) against 2P, P/2, 3P, P/3, 3P/2,
