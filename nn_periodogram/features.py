@@ -126,33 +126,53 @@ def prepare(time, mag, N=N_POINTS, seed=0):
     return time, mag
 
 
-# --- binned phase profile (NN_Periodogram models) -------------------------------
+# --- binned phase profile (NN_Periodogram models) ---------------------------
 
 N_BINS = 64
+RESOLUTIONS = (8, 16, 32, 64)
+N_PROFILE = 4 * len(RESOLUTIONS)     # channels from binned_profile
+N_GLOBAL = 3                         # values from global_features
 
 
-def binned_profile(phase, z, w, n_bins=N_BINS):
-    """Fold summary for the new models.
+def binned_profile(phase, z, ze, w, n_bins=N_BINS, resolutions=RESOLUTIONS):
+    """Multi-resolution fold summary for light curves of any length.
 
-    phase, z : (B, L) phases in [0, 1) and robust-normalised magnitudes
-    w        : (B, L) 1 for real points, 0 for padding
-    returns  : (B, 4, n_bins) [mean z, scatter of z, fraction of points, log count]
-    Everything is per phase bin, so the number and spacing of points matter less.
+    phase : (B, L) phases in [0, 1)
+    z, ze : (B, L) robust-normalised magnitudes and their errors (same scale)
+    w     : (B, L) 1 for real points, 0 for padding; L can be anything
+    returns (B, 4 * len(resolutions), n_bins): for each resolution, per bin
+    [mean z, scatter of z, mean error, log(1 + count)], repeated up to n_bins.
+    Coarse bins keep sparse light curves informative; fine bins resolve shape.
     """
-    idx = torch.clamp((phase * n_bins).long(), 0, n_bins - 1)
-    n = torch.zeros(phase.shape[0], n_bins, device=phase.device, dtype=z.dtype).scatter_add_(1, idx, w)
-    s1 = torch.zeros_like(n).scatter_add_(1, idx, w * z)
-    s2 = torch.zeros_like(n).scatter_add_(1, idx, w * z * z)
-    safe = n.clamp_min(1)
-    mean = torch.where(n > 0, s1 / safe, torch.zeros_like(n))
-    var = torch.where(n > 1, (s2 / safe - mean ** 2).clamp_min(0), torch.zeros_like(n))
-    frac = n / w.sum(1, keepdim=True).clamp_min(1)
-    return torch.stack([mean, var.sqrt(), frac * n_bins, torch.log1p(n)], 1)
+    out = []
+    for nb in resolutions:
+        idx = torch.clamp((phase * nb).long(), 0, nb - 1)
+        n = torch.zeros(phase.shape[0], nb, device=phase.device, dtype=z.dtype).scatter_add_(1, idx, w)
+        s1 = torch.zeros_like(n).scatter_add_(1, idx, w * z)
+        s2 = torch.zeros_like(n).scatter_add_(1, idx, w * z * z)
+        se = torch.zeros_like(n).scatter_add_(1, idx, w * ze)
+        safe = n.clamp_min(1)
+        mean = torch.where(n > 0, s1 / safe, torch.zeros_like(n))
+        var = torch.where(n > 1, (s2 / safe - mean ** 2).clamp_min(0), torch.zeros_like(n))
+        err = torch.where(n > 0, se / safe, torch.zeros_like(n))
+        feats = torch.stack([mean, var.sqrt(), err, torch.log1p(n)], 1)          # (B, 4, nb)
+        out.append(feats.repeat_interleave(n_bins // nb, dim=2))
+    return torch.cat(out, 1)
 
 
-def robust_normalise(mag, w):
-    """(m - median) / (1.4826 MAD) per row, ignoring padding (w == 0)."""
+def global_features(z, ze, w):
+    """(B, 3): log10 number of points, log10 reduced chi^2 about the median, log10 median error."""
+    n = w.sum(1)
+    chi2 = (w * (z / ze.clamp_min(1e-3)) ** 2).sum(1) / n.clamp_min(1)
+    med_err = torch.nanmedian(torch.where(w > 0, ze, torch.nan), dim=1).values
+    return torch.stack([torch.log10(n.clamp_min(1)), torch.log10(chi2.clamp_min(1e-3)),
+                        torch.log10(med_err.clamp_min(1e-3))], 1)
+
+
+def robust_normalise(mag, err, w):
+    """(m - median) / s and err / s per row, s = 1.4826 MAD, ignoring padding (w == 0)."""
     big = torch.where(w > 0, mag, torch.nan)
     med = torch.nanmedian(big, dim=1, keepdim=True).values
-    mad = torch.nanmedian((big - med).abs(), dim=1, keepdim=True).values * 1.4826
-    return torch.where(w > 0, (mag - med) / mad.clamp_min(1e-6), torch.zeros_like(mag))
+    s = (torch.nanmedian((big - med).abs(), dim=1, keepdim=True).values * 1.4826).clamp_min(1e-6)
+    zero = torch.zeros_like(mag)
+    return torch.where(w > 0, (mag - med) / s, zero), torch.where(w > 0, err / s, zero)

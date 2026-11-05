@@ -13,7 +13,6 @@ clip(0.2 x + 0.5, 0, 1).  Input is (batch, 7, 200): the 7 NN_FAP channels
 are the timesteps.
 """
 
-import h5py
 import torch
 import torch.nn as nn
 
@@ -62,6 +61,7 @@ class LegacyNNFAP(nn.Module):
 
 def from_keras_h5(path):
     """Build the model and load the 2022 Keras weights."""
+    import h5py                     # only needed to convert the original Keras file
     m = LegacyNNFAP()
     with h5py.File(path, "r") as f:
         names = [n.decode() if isinstance(n, bytes) else n for n in f.attrs["layer_names"]]
@@ -91,19 +91,21 @@ class _Res(nn.Module):
 
 
 class PeriodsNet(nn.Module):
-    """Circular 1-D CNN over a 64-bin phase profile; returns P(fold is a real signal)."""
+    """Circular 1-D CNN over the multi-resolution phase profile, conditioned on global
+    light-curve features (number of points, chi^2, errors). Returns P(fold is a real signal)."""
     input_kind = "binned"
 
-    def __init__(self, n_in=4, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8)):
+    def __init__(self, n_in=16, n_global=3, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8)):
         super().__init__()
         self.stem = nn.Sequential(nn.Conv1d(n_in, width, 5, padding=2, padding_mode="circular"),
                                   nn.BatchNorm1d(width), nn.ReLU())
         self.blocks = nn.Sequential(*[_Res(width, d) for d in dilations])
-        self.head = nn.Sequential(nn.Linear(2 * width, 128), nn.ReLU(), nn.Linear(128, 1))
+        self.glob = nn.Sequential(nn.Linear(n_global, 32), nn.ReLU())
+        self.head = nn.Sequential(nn.Linear(2 * width + 32, 128), nn.ReLU(), nn.Linear(128, 1))
 
-    def logits(self, x):
+    def logits(self, x, g):
         h = self.blocks(self.stem(x))
-        return self.head(torch.cat([h.mean(-1), h.amax(-1)], 1)).squeeze(-1)
+        return self.head(torch.cat([h.mean(-1), h.amax(-1), self.glob(g)], 1)).squeeze(-1)
 
-    def forward(self, x):
-        return torch.sigmoid(self.logits(x))
+    def forward(self, x, g):
+        return torch.sigmoid(self.logits(x, g))

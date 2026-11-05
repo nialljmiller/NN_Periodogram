@@ -6,7 +6,8 @@ import numpy as np
 import torch
 
 from . import hub
-from .features import binned_profile, channels_from_phase, fold_phase, prepare, robust_normalise
+from .features import (binned_profile, channels_from_phase, fold_phase, global_features, prepare,
+                       robust_normalise)
 
 _MODELS = {}
 
@@ -37,33 +38,42 @@ def _score_legacy(t, m, freqs, model, device, batch, exact=False):
     return out
 
 
+def estimate_errors(t, m):
+    """Per-point error when none is given: scatter between time-neighbouring points."""
+    d = np.diff(m[np.argsort(t)])
+    return np.full(len(m), max(1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2), 1e-6))
+
+
 @torch.no_grad()
-def _score_binned(t, m, freqs, model, device, batch, max_points=512, seed=0):
+def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24):
+    """Every point is used; batches shrink as light curves grow to bound memory."""
     t, m = np.asarray(t, float), np.asarray(m, float)
-    ok = np.isfinite(t) & np.isfinite(m)
-    t, m = t[ok], m[ok]
-    if len(t) > max_points:
-        keep = np.sort(np.random.default_rng(seed).choice(len(t), max_points, replace=False))
-        t, m = t[keep], m[keep]
+    e = estimate_errors(t, m) if e is None else np.asarray(e, float)
+    ok = np.isfinite(t) & np.isfinite(m) & np.isfinite(e) & (e > 0)
+    t, m, e = t[ok], m[ok], e[ok]
     w = torch.ones(1, len(t), device=device)
-    z = robust_normalise(torch.tensor(m, dtype=torch.float32, device=device)[None], w)
+    z, ze = robust_normalise(torch.tensor(m, dtype=torch.float32, device=device)[None],
+                             torch.tensor(e, dtype=torch.float32, device=device)[None], w)
+    g = global_features(z, ze, w)
     tt = torch.tensor(t, dtype=torch.float64)
+    batch = max(1, max_elements // len(t))
     out = np.empty(len(freqs), np.float32)
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
         ph = fold_phase(tt, f).to(device=device, dtype=torch.float32)
-        x = binned_profile(ph, z.expand(len(f), -1), w.expand(len(f), -1))
-        out[s:s + len(f)] = 1.0 - model(x).float().cpu().numpy()      # P(real) -> FAP
+        B = len(f)
+        x = binned_profile(ph, z.expand(B, -1), ze.expand(B, -1), w.expand(B, -1))
+        out[s:s + B] = 1.0 - model(x, g.expand(B, -1)).float().cpu().numpy()   # P(real) -> FAP
     return out
 
 
-def _score(t, m, freqs, model, device, batch, exact=False):
+def _score(t, m, freqs, model, device, batch, exact=False, err=None):
     if getattr(model, "input_kind", "legacy") == "binned":
-        return _score_binned(t, m, freqs, model, device, batch)
+        return _score_binned(t, m, err, freqs, model, device)
     return _score_legacy(t, m, freqs, model, device, batch, exact)
 
 
-def fap(time, mag, period, model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
+def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """NN false-alarm probability of `period` (scalar or array) for one light curve.
 
     Low values mean the fold at that period looks like a real signal.
@@ -71,7 +81,7 @@ def fap(time, mag, period, model=hub.DEFAULT, device=None, batch=1024, weights=N
     device = torch.device(device) if device else hub.default_device()
     t, m = np.asarray(time, float), np.asarray(mag, float)
     periods = np.atleast_1d(np.asarray(period, float))
-    out = _score(t, m, 1.0 / periods, _model(model, device, weights), device, batch, exact)
+    out = _score(t, m, 1.0 / periods, _model(model, device, weights), device, batch, exact, err)
     return out if np.ndim(period) else float(out[0])
 
 
@@ -97,7 +107,7 @@ class Periodogram:
         return ax
 
 
-def periodogram(time, mag, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
+def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """NN periodogram: FAP at every trial frequency, then a finer pass around the best peaks.
 
@@ -113,7 +123,7 @@ def periodogram(time, mag, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refi
     fmin = fmin or 2.0 / span
     freqs = np.arange(fmin, fmax, df)
     net = _model(model, device, weights)
-    f_ap = _score(t, m, freqs, net, device, batch, exact)
+    f_ap = _score(t, m, freqs, net, device, batch, exact, err)
 
     # local minima, best first, separated by at least 5 grid steps
     order = np.argsort(f_ap)
@@ -126,7 +136,7 @@ def periodogram(time, mag, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refi
     peaks = []
     for i in picked:
         fine = np.linspace(freqs[i] - df, freqs[i] + df, 2 * refine + 1)
-        ff = _score(t, m, fine, net, device, batch, exact)
+        ff = _score(t, m, fine, net, device, batch, exact, err)
         k = int(np.argmin(ff))
         peaks.append((1.0 / fine[k], float(ff[k])))
     peaks.sort(key=lambda p: p[1])

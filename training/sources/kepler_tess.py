@@ -13,6 +13,7 @@ under --cache (not the home directory).
 
 import argparse
 import os
+import re
 from pathlib import Path
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -46,7 +47,13 @@ def fetch(target, mission, cache):
                                   exptime=1800 if mission == "Kepler" else 120)
         if len(sr) == 0:
             return None
-        lcs = sr.download_all(flux_column="pdcsap_flux", quality_bitmask="default", download_dir=cache)
+        try:
+            lcs = sr.download_all(flux_column="pdcsap_flux", quality_bitmask="default", download_dir=cache)
+        except lk.utils.LightkurveError as exc:         # corrupt cached file: delete it and fetch again
+            bad = re.search(r"product (\S+\.fits)", str(exc))
+            if bad:
+                Path(bad.group(1)).unlink(missing_ok=True)
+            lcs = sr.download_all(flux_column="pdcsap_flux", quality_bitmask="default", download_dir=cache)
         t, f, e = [], [], []
         for lc in lcs:
             lc = lc.remove_nans()
@@ -69,12 +76,21 @@ def main():
     ap.add_argument("--n", type=int, default=5000); ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--seed", type=int, default=20261104)
     ap.add_argument("--sets", nargs="+", default=list(SETS))
+    ap.add_argument("--log", required=True, help="progress log (stdout gets closed by the download stack)")
     a = ap.parse_args()
     os.makedirs(a.cache, exist_ok=True)
+    logf = open(a.log, "a", buffering=1)
+    log = lambda msg: logf.write(msg + "\n")
+    from astroquery.mast import Observations
+    Observations.enable_cloud_dataset = False
+    import logging
+    logging.getLogger("astroquery").setLevel(logging.ERROR)
     for name in a.sets:
+        if (Path(a.out) / f"{name}_meta.json").exists():
+            continue
         path, idcol, percol, mission, fmt = SETS[name]
         rows = catalogue(Path(a.catalogues) / path, idcol, percol, a.n, a.seed)
-        print(f"{name}: {len(rows)} catalogue stars", flush=True)
+        log(f"{name}: {len(rows)} catalogue stars")
         w = ShardWriter(a.out, name)
         with ThreadPoolExecutor(a.workers) as pool:
             res = pool.map(lambda r: (r, fetch(fmt.format(int(r[0])), mission, a.cache)), rows)
@@ -82,8 +98,8 @@ def main():
                 if lc is not None:
                     w.add(int(row[0]), *lc, mission, "Kp" if mission == "Kepler" else "T", [float(row[1])], cls=name)
                 if k % 250 == 0:
-                    print(f"  {k}/{len(rows)}  kept {len(w)}", flush=True)
-        print(f"{name}: {w.close()} stars", flush=True)
+                    log(f"  {k}/{len(rows)}  kept {len(w)}")
+        log(f"{name}: {w.close()} stars")
 
 
 if __name__ == "__main__":
