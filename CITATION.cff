@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use NN_Periodogram, please cite the software and the NN_FAP paper."
+title: "NN_Periodogram: neural-network periodograms and false-alarm probabilities for astronomical time series"
+authors:
+  - family-names: Miller
+    given-names: Niall J.
+    email: niall.j.miller@gmail.com
+version: 0.2.0
+license: MIT
+repository-code: "https://github.com/nialljmiller/NN_Periodogram"
+url: "https://nialljmiller.com/projects/NN_Periodogram/"
+keywords: [astronomy, periodogram, variable stars, time series, neural network, false alarm probability]
+preferred-citation:
+  type: article
+  title: "The verification of periodicity with the use of recurrent neural networks"
+  authors:
+    - family-names: Miller
+      given-names: Niall
+    - family-names: Lucas
+      given-names: P. W.
+    - family-names: Sun
+      given-names: Y.
+    - family-names: Guo
+      given-names: Z.
+    - family-names: Cooper
+      given-names: W. J.
+    - family-names: Morris
+      given-names: C.
+  journal: "RAS Techniques and Instruments"
+  volume: 3
+  issue: 1
+  start: 224
+  end: 233
+  year: 2024
+  doi: "10.1093/rasti/rzae015"

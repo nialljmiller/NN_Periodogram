@@ -48,3 +48,16 @@ def test_cpu_and_gpu_agree():
     f = np.linspace(0.05, 5, 5000)
     a, b = gls(t, m, e, f, torch.device("cpu")), gls(t, m, e, f, torch.device(DEVICES[1]))
     np.testing.assert_allclose(a, b, atol=1e-4)
+
+
+def test_astropy_inputs_match_plain():
+    u = pytest.importorskip("astropy.units")
+    Time = pytest.importorskip("astropy.time").Time
+    t, m, e, period = _lc(2)
+    P._MODELS[("test-net", "cpu", None)] = PeriodsNet(views=(1.0, 0.5, 2.0)).eval()
+    plain = nnp.fap(t, m, [period, 2 * period], err=e, model="test-net", device="cpu")
+    with_units = nnp.fap(t * u.day, m * u.mag,
+                         [period, 2 * period] * u.day, err=e * u.mag, model="test-net", device="cpu")
+    np.testing.assert_allclose(plain, with_units, rtol=1e-6)
+    as_time = nnp.fap(Time(t, format="mjd"), m, (period * u.day).to(u.hour), err=e, model="test-net", device="cpu")
+    np.testing.assert_allclose(plain[0], as_time, rtol=1e-4)

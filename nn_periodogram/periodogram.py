@@ -13,6 +13,32 @@ from .features import (channels_from_phase, fold_phase, global_features, prepare
 _MODELS = {}
 
 
+def _days(x):
+    """Plain float days from numbers, astropy Time (-> JD) or Quantity (-> day); astropy optional."""
+    if hasattr(x, "jd") and hasattr(x, "scale"):          # astropy.time.Time
+        return np.asarray(x.jd, float)
+    if hasattr(x, "unit") and hasattr(x, "to_value"):      # astropy Quantity
+        return np.asarray(x.to_value("day"), float)
+    return np.asarray(x, float)
+
+
+def _plain(x):
+    """Magnitudes/fluxes and their errors: strip any astropy unit."""
+    if x is None:
+        return None
+    return np.asarray(x.value if hasattr(x, "unit") and hasattr(x, "value") else x, float)
+
+
+def _freq(x):
+    """Frequencies in 1/day from numbers or a Quantity (frequency or period)."""
+    if x is None or not hasattr(x, "unit"):
+        return x
+    try:
+        return float(x.to_value("1/day"))
+    except Exception:
+        return 1.0 / float(x.to_value("day"))
+
+
 def _model(name, device, path=None):
     key = (name, str(device), path)
     if key not in _MODELS:
@@ -56,7 +82,7 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24):
     z, ze = robust_normalise(torch.tensor(m, dtype=torch.float32, device=device)[None],
                              torch.tensor(e, dtype=torch.float32, device=device)[None], w)
     g = global_features(z, ze, w)
-    tt = torch.tensor(t, dtype=torch.float64)
+    tt = torch.tensor(t - t.min(), dtype=torch.float64)   # phase origin = first point: same answer for MJD, JD, ...
     batch = max(1, min(4096, max_elements // len(t)))     # bound both the point arrays and the network activations
     out = np.empty(len(freqs), np.float32)
     views = getattr(model, "views", (1.0,))
@@ -81,8 +107,8 @@ def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024,
     Low values mean the fold at that period looks like a real signal.
     """
     device = torch.device(device) if device else hub.default_device()
-    t, m = np.asarray(time, float), np.asarray(mag, float)
-    periods = np.atleast_1d(np.asarray(period, float))
+    t, m, err = _days(time), _plain(mag), _plain(err)
+    periods = np.atleast_1d(_days(period))
     out = _score(t, m, 1.0 / periods, _model(model, device, weights), device, batch, exact, err)
     return out if np.ndim(period) else float(out[0])
 
@@ -121,6 +147,7 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     """
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
+    time, mag, err, fmin, fmax = _days(time), _plain(mag), _plain(err), _freq(fmin), _freq(fmax)
     if method is None:          # the 2022 network only works as an exhaustive search
         method = "full" if getattr(net, "input_kind", "legacy") == "legacy" else "hybrid"
     if method == "hybrid":
@@ -238,6 +265,8 @@ def check_period(time, mag, period, err=None, model="periods-v3", device=None, w
     """
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
+    time, mag, err = _days(time), _plain(mag), _plain(err)
+    period = float(_days(period))
     f0 = 1.0 / period
     cands = [("P", f0), ("2P", f0 / 2), ("P/2", 2 * f0), ("3P", f0 / 3), ("P/3", 3 * f0),
              ("3P/2", f0 * 2 / 3), ("2P/3", f0 * 1.5)]

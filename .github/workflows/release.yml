@@ -1,0 +1,22 @@
+# Builds the sdist/wheel on every GitHub release and publishes to PyPI with
+# trusted publishing (configure the "pypi" environment on PyPI first:
+# https://docs.pypi.org/trusted-publishers/).
+name: release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build && python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
