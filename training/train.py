@@ -37,11 +37,24 @@ F_MAX = 20.0       # highest trial frequency, 1/day
 VIEWS = (1.0,)     # set from --views: folds at f * r for each r
 
 
+def mapped(path):
+    """Arrays of {path}.npz, memory-mapped. The (uncompressed) npz is unpacked once into
+    {path}.npyd/ as plain .npy files; only the pages actually read are held in RAM."""
+    import zipfile
+    d = Path(f"{path}.npyd")
+    if not (d / "done").exists():
+        d.mkdir(exist_ok=True)
+        with zipfile.ZipFile(f"{path}.npz") as z:
+            z.extractall(d)
+        (d / "done").touch()
+    return {f.stem: np.load(f, mmap_mode="r") for f in d.glob("*.npy")}
+
+
 class Shard:
     def __init__(self, path, split):
         # VVV labels came from LS/PDM agreement, so its harmonics are not trustworthy negatives
         self.trusted = not Path(path).name.startswith("vvv_")
-        d = dict(np.load(f"{path}.npz"))  # load arrays once: indexing an NpzFile re-reads the whole array
+        d = mapped(path)                  # memory-mapped: 20+ GB of shards in a few GB of RAM
         meta = json.load(open(f"{path}_meta.json"))
         periods = {i: r.get("period", np.nan) for i, r in enumerate(meta)}
         vpath = Path(f"{path}_verified.json")
