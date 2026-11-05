@@ -108,6 +108,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
+                prefer_shorter=None,
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """NN periodogram: FAP at every trial frequency, then a finer pass around the best peaks.
 
@@ -143,8 +144,12 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
 
     best, best_f = peaks[0]
     note = ""
+    # A model that cannot tell P from 2P scores them alike; then the shorter of a tied pair is
+    # reported (on the benchmark this helps both the 2022 model and periods-v1).
+    if prefer_shorter is None:
+        prefer_shorter = True
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
-    if half and half[0][1] <= 1.25 * best_f:
+    if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
         best, best_f = half[0]
     return Periodogram(freqs, f_ap, peaks, best, best_f, note)

@@ -38,6 +38,8 @@ F_MAX = 20.0       # highest trial frequency, 1/day
 
 class Shard:
     def __init__(self, path, split):
+        # VVV labels came from LS/PDM agreement, so its harmonics are not trustworthy negatives
+        self.trusted = not Path(path).name.startswith("vvv_")
         d = dict(np.load(f"{path}.npz"))  # load arrays once: indexing an NpzFile re-reads the whole array
         meta = json.load(open(f"{path}_meta.json"))
         periods = {i: r.get("period", np.nan) for i, r in enumerate(meta)}
@@ -97,8 +99,19 @@ def signal(shape, phase, rng):
     return y / (np.ptp(y) / 2 + 1e-9)
 
 
-def negative_freq(f_true, span, rng):
-    """A wrong frequency for a star whose true frequency is f_true (nan for none)."""
+HARMONICS = (2.0, 0.5, 3.0, 1 / 3, 2 / 3, 1.5)
+
+
+def negative_freq(f_true, span, rng, harmonics=False):
+    """A wrong frequency for a star whose true frequency is f_true (nan for none).
+
+    With harmonics=True (only where the truth is exact: injections and the
+    high-quality catalogues), a quarter of negatives are k/n multiples of the
+    true frequency, so the model learns P from 2P and P/2. Otherwise folds near
+    any small-integer ratio are kept out of the negatives.
+    """
+    if harmonics and np.isfinite(f_true) and rng.uniform() < 0.25:
+        return f_true * HARMONICS[rng.integers(len(HARMONICS))] + rng.uniform(-0.05, 0.05) / span
     for _ in range(100):
         kind = rng.uniform()
         if np.isfinite(f_true) and kind < 0.3:
@@ -158,22 +171,23 @@ def batch(reals, quiet, B, rng, device):
         if src < 0.35:
             real = reals[rng.integers(len(reals))]
             i = rng.integers(len(real)); t, m, e = real.t[i], real.m[i], real.e[i]; f_true = 1 / real.period[i]
+            exact = real.trusted
         elif src < 0.65:
             i = rng.integers(len(quiet)); t, e = quiet.t[i], quiet.e[i]
-            m, f_true = inject(t, quiet.m[i].astype(float), rng)
+            m, f_true = inject(t, quiet.m[i].astype(float), rng); exact = True
         elif src < 0.85:
             real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
             t, e = real.t[i], np.asarray(real.e[i], float)
-            m, f_true = inject(t, synthetic_noise(t, e, rng), rng)
+            m, f_true = inject(t, synthetic_noise(t, e, rng), rng); exact = True
         else:
-            positive, f_true = False, np.nan
+            positive, f_true, exact = False, np.nan, False
             if rng.uniform() < 0.5:
                 i = rng.integers(len(quiet)); t, m, e = quiet.t[i], quiet.m[i], quiet.e[i]
             else:
                 real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
                 t, e = real.t[i], np.asarray(real.e[i], float); m = synthetic_noise(t, e, rng)
         span = np.ptp(t)
-        f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng)
+        f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng, exact)
         t, m, e = thin(np.asarray(t), np.asarray(m, float), np.asarray(e, float), rng)
         times.append(t); mags.append(m); errs.append(e); freqs.append(f); labels.append(float(positive))
     T, w = pad(times); M, _ = pad(mags); E, _ = pad(errs)
