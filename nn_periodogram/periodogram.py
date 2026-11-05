@@ -102,9 +102,33 @@ def _score(t, m, freqs, model, device, batch, exact=False, err=None):
 
 
 def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
-    """NN false-alarm probability of `period` (scalar or array) for one light curve.
+    """Neural-network false-alarm probability of one or more trial periods.
 
-    Low values mean the fold at that period looks like a real signal.
+    Parameters
+    ----------
+    time : array-like, astropy Time or Quantity
+        Observation times, in days unless they carry units. Any length from ~10 points.
+    mag : array-like or Quantity
+        Magnitudes (or fluxes; only the shape of the folded curve matters).
+    period : float, array-like or Quantity
+        Trial period(s), in days unless they carry units.
+    err : array-like or Quantity, optional
+        Per-point uncertainties. Estimated from point-to-point scatter if omitted.
+    model : str
+        Registered model name (see ``nn_periodogram.hub.MODELS``).
+    device : str or torch.device, optional
+        ``"cpu"``, ``"cuda"`` or ``"mps"``. Default: the best available.
+    batch : int
+        Trial periods per pass (legacy model only; newer models size batches automatically).
+    weights : str, optional
+        Path to a local weights file, bypassing the download.
+    exact : bool
+        Legacy model only: compute features in float64 on the CPU, matching the 2022 code to ~1e-6.
+
+    Returns
+    -------
+    float or numpy.ndarray
+        FAP in [0, 1] per period; low means the fold looks like a real periodic signal.
     """
     device = torch.device(device) if device else hub.default_device()
     t, m, err = _days(time), _plain(mag), _plain(err)
@@ -138,12 +162,38 @@ class Periodogram:
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
                 prefer_shorter=None, method=None, n_candidates=10,
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
-    """NN periodogram: FAP at every trial frequency, then a finer pass around the best peaks.
+    """Find the period of a light curve.
 
-    The grid spacing is 1/(oversample * baseline). Folding at twice the true
-    period also gives a coherent curve, and the network scores it about the
-    same, so when the best peak's half-period is nearly as good, the shorter
-    period is reported and `note` says so.
+    Parameters
+    ----------
+    time, mag, err
+        As for :func:`fap`.
+    fmin, fmax : float or Quantity, optional
+        Frequency range in 1/day (or any frequency/period Quantity). ``fmin`` defaults to
+        2 / baseline; ``fmax`` to 10 / day.
+    oversample : float
+        Grid samples per 1/baseline.
+    method : {"hybrid", "full"}, optional
+        ``"hybrid"`` (default for the new models): GPU Lomb-Scargle and phase-dispersion
+        periodograms propose candidates (their best peaks and each one's 2x, 1/2x, 3x and
+        1/3x), and the network chooses among them. Costs about as much as LS + PDM.
+        ``"full"``: the network scores every grid frequency, then refines the best
+        ``n_peaks`` peaks. Slower, and independent of the classical methods.
+    n_candidates : int
+        Hybrid: peaks taken from each classical periodogram.
+    n_peaks, refine : int
+        Full: peaks refined, and fine-grid points per side.
+    prefer_shorter : bool, optional
+        When the best period's half scores within 25% of it, report the half (and say so in
+        ``note``). Default True.
+    model, device, batch, weights, exact
+        As for :func:`fap`.
+
+    Returns
+    -------
+    Periodogram
+        ``best_period``, ``best_fap``, ``peaks`` [(period, fap), ...], the scored ``freq``
+        and ``fap`` arrays, a ``note``, and ``plot()``.
     """
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
@@ -257,11 +307,24 @@ class PeriodCheck:
 
 
 def check_period(time, mag, period, err=None, model="periods-v3", device=None, weights=None):
-    """Is `period` right, or is it really a harmonic or a sampling alias of the true period?
+    """Check a known period: is it right, a harmonic, or a sampling alias?
 
-    Scores the period you give (from any method or catalogue) against 2P, P/2, 3P,
-    P/3, 3P/2, 2P/3 and the daily and yearly aliases, and reports the one the
-    network prefers. A few dozen folds: nearly free.
+    Scores ``period`` (from any method or catalogue) against 2P, P/2, 3P, P/3, 3P/2,
+    2P/3 and its +-1/sidereal-day and +-1/year aliases, and reports the one the network
+    prefers. Costs a dozen folds, so it is cheap enough for whole catalogues.
+
+    Parameters
+    ----------
+    time, mag, err, model, device, weights
+        As for :func:`fap`.
+    period : float or Quantity
+        The period to check, in days unless it carries units.
+
+    Returns
+    -------
+    PeriodCheck
+        ``best_period``, ``best_fap``, ``relation`` (e.g. ``"P"``, ``"2P"``,
+        ``"alias +1/d"``) and every candidate as ``(relation, period, fap)``, best first.
     """
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
