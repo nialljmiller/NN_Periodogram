@@ -5,7 +5,7 @@ authors:
   - family-names: Miller
     given-names: Niall J.
     email: niall.j.miller@gmail.com
-version: 0.2.0
+version: 1.0.0
 license: MIT
 repository-code: "https://github.com/nialljmiller/NN_Periodogram"
 url: "https://nialljmiller.com/projects/NN_Periodogram/"

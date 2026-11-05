@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nn-periodogram"
-version = "0.1.0"
+version = "1.0.0"
 description = "Neural-network false-alarm probabilities and periodograms for astronomical time series"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -12,7 +12,7 @@ authors = [{name = "Niall J. Miller", email = "niall.j.miller@gmail.com"}]
 requires-python = ">=3.9"
 keywords = ["astronomy", "time series", "periodogram", "variable stars", "false alarm probability", "neural network"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
