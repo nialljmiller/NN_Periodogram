@@ -61,7 +61,7 @@ def gls(t, y, dy, freqs, device, chunk=None):
     wt = torch.tensor(w, dtype=torch.float32, device=device)
     yt = torch.tensor(y, dtype=torch.float32, device=device)
     yy = float((w * y * y).sum())
-    chunk = chunk or max(1024, 2 ** 24 // len(t))       # bound memory for long light curves
+    chunk = chunk or max(16, 2 ** 24 // len(t))         # bound memory for long light curves
     out = []
     for s in range(0, len(freqs), chunk):
         f = torch.tensor(freqs[s:s + chunk], dtype=torch.float64, device=device)
@@ -179,6 +179,9 @@ def main():
         guard.check()
         s, e = off[i], off[i + 1]
         t, y, dy = d["time"][s:e], d["mag"][s:e].astype(float), d["err"][s:e].astype(float)
+        if len(t) > 20000:     # checking a period needs far fewer points than a 2-min TESS light curve has
+            keep = np.sort(np.random.default_rng(i).choice(len(t), 20000, replace=False))
+            t, y, dy = t[keep], y[keep], dy[keep]
         res = verify_one(t, y, dy, row["candidate_freqs"], device)
         if res is not None and res["fap"] < 1e-3:
             rec = {"verified": True, "method": "ls", **res}

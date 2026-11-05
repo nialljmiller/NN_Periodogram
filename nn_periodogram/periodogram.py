@@ -56,7 +56,7 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24):
                              torch.tensor(e, dtype=torch.float32, device=device)[None], w)
     g = global_features(z, ze, w)
     tt = torch.tensor(t, dtype=torch.float64)
-    batch = max(1, max_elements // len(t))
+    batch = max(1, min(4096, max_elements // len(t)))     # bound both the point arrays and the network activations
     out = np.empty(len(freqs), np.float32)
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
