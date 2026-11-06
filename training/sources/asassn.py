@@ -7,7 +7,7 @@ asas_sn_id. Each band (V, g) is packed separately. Only good-quality
 detections are kept, and each camera's median is subtracted within a band
 so camera zero-point offsets do not masquerade as variability.
 
-    python asassn.py --out /media/nill/Musak/nn_periodogram/shards --per-class 4000 --threads 8
+    python asassn.py --out SHARDS --per-class 4000 --threads 8
 """
 
 import argparse

@@ -66,7 +66,7 @@ class ShardWriter:
 
 
 def vizier():
-    """astroquery Vizier on the Harvard mirror (Strasbourg times out from windybox), no row limit."""
+    """astroquery Vizier on the Harvard mirror (Strasbourg often times out), no row limit."""
     from astroquery.vizier import Vizier
     return Vizier(row_limit=-1, vizier_server="vizier.cfa.harvard.edu", timeout=600)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train PeriodsNet on the shards from build_dataset.py (run on windybox's 3070 Ti).
+"""Train PeriodsNet on the shards from build_dataset.py (one consumer GPU is plenty).
 
 Light curves are used whole, from 10 to 10,000+ points: batches are padded to
 the longest one with a mask. Half the time a light curve is randomly thinned to
@@ -16,7 +16,7 @@ Each batch is built on the fly, half positives and half negatives:
 Folds within 0.5/T of k/n times the true frequency (k, n <= 3) are left out
 of the negatives, since they are partly coherent; periodogram() deals with them.
 
-    python train.py --data /media/data4/nn_periodogram_data --out runs/v1
+    python train.py --data DATA --out runs/v1
 """
 
 import argparse

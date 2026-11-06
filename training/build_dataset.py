@@ -18,10 +18,11 @@ NN_FAP network's output, so nothing here trusts a single catalogue number:
 
 Splits are by star (sha1 of sourceid). Rules, counts and seeds go to manifest.json.
 
-    python build_dataset.py --out /media/data4/nn_periodogram_data_v2 --workers 7
+    python build_dataset.py --out DATA --workers 7
 """
 
 import argparse
+import os
 import csv
 import hashlib
 import json
@@ -31,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-PRIMVS = Path("/media/data4/PRIMVS")
+PRIMVS = Path(os.environ.get("PRIMVS_DIR", "PRIMVS"))   # PRIMVS catalogue and light curves
 LC_ROOT = PRIMVS / "light_curves"
 P_MIN, P_MAX = 0.05, 300.0          # days
 F_MAX = 20.0                        # highest frequency searched when verifying, 1/day

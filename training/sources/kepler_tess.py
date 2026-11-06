@@ -8,7 +8,7 @@ PDCSAP fluxes, quality-flag cleaned, every quarter/sector stitched (each
 normalised to its median) and converted to magnitudes. Downloads are cached
 under --cache (not the home directory).
 
-    python kepler_tess.py --out SHARDS --catalogues CATALOGUES --cache /media/nill/Musak/nn_periodogram/raw/mast
+    python kepler_tess.py --out SHARDS --catalogues CATALOGUES --cache RAW/mast
 """
 
 import argparse

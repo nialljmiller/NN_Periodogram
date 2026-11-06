@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify every shard in DIR that has candidate periods and no *_verified.json yet; repeat until none left.
-DIR=${1:-/media/nill/Musak/nn_periodogram/shards}
+DIR=${1:?usage: verify_all.sh SHARDS_DIR}
 PY=${PY:-$HOME/.venvs/nnperiods/bin/python}
 cd "$(dirname "$0")"
 while true; do

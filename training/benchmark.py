@@ -5,7 +5,7 @@ Runs periodogram() with a given model on the same stars and grid and scores the
 reported period against ASAS-SN's: correct (within 1%), harmonic (within 1% of
 k/n x P, k, n <= 4), or wrong.
 
-    python benchmark.py --data /media/data4/nn_periodogram_data --model legacy-2022 --weights w.pt --n 200
+    python benchmark.py --data DATA --model legacy-2022 --weights w.pt --n 200
 """
 
 import argparse

@@ -7,7 +7,7 @@ column after the I and V mean magnitudes) and the I-band light curves from
 the tarball, streaming it so nothing large is unpacked. Stars per class are
 capped so no class dominates. Raw tarballs are kept under --raw.
 
-    python ogle.py --raw /media/nill/Musak/nn_periodogram/raw/ogle --out /media/nill/Musak/nn_periodogram/shards
+    python ogle.py --raw RAW/ogle --out SHARDS
 """
 
 import argparse
