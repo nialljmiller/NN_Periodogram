@@ -53,12 +53,14 @@ def mapped(path):
 class Shard:
     def __init__(self, path, split):
         # VVV labels came from LS/PDM agreement, so its harmonics are not trustworthy negatives
-        self.trusted = not Path(path).name.startswith("vvv_")
+        self.trusted = not Path(path).name.startswith("vvv_real")
         d = mapped(path)                  # memory-mapped: 20+ GB of shards in a few GB of RAM
         meta = json.load(open(f"{path}_meta.json"))
         periods = {i: r.get("period", np.nan) for i, r in enumerate(meta)}
-        vpath = Path(f"{path}_verified.json")
-        if vpath.exists():                 # real stars: keep only verified ones, label = our LS peak
+        lpath, vpath = Path(f"{path}_labels.json"), Path(f"{path}_verified.json")
+        if lpath.exists():                 # relabel.py: catalogue period (refined) for verified stars
+            periods = {v["index"]: 1 / v["freq"] for v in json.load(open(lpath))}
+        elif vpath.exists():               # older runs: verified frequency (may be a harmonic!)
             periods = {v["index"]: 1 / v["freq"] for v in json.load(open(vpath)) if v["verified"]}
         keep = [i for i, r in enumerate(meta) if r["split"] == split and i in periods]
         off = d["offsets"]
@@ -195,7 +197,7 @@ def inject(t, m, rng):
     return m + amp * signal(rng.choice(["sine", "rr", "eb", "fourier"]), (t * f_true) % 1, rng), f_true
 
 
-def batch(reals, quiet, B, rng, device):
+def batch_arrays(reals, quiet, B, rng):
     """Mix per example (positives ~half):
       35%  real variable from any survey, at its verified period or a wrong one
       30%  signal injected into a quiet VVV star (real noise and systematics)
@@ -236,12 +238,36 @@ def batch(reals, quiet, B, rng, device):
         t, m, e = augment(t, m, e, rng)
         times.append(t); mags.append(m); errs.append(e); freqs.append(f); labels.append(float(positive))
     T, w = pad(times); M, _ = pad(mags); E, _ = pad(errs)
+    return T, w, M, E, np.array(freqs), np.array(labels, np.float32)
+
+
+def features(arrays, device):
+    """Padded arrays from batch_arrays -> network inputs on `device`."""
+    T, w, M, E, freqs, labels = (np.asarray(a) for a in arrays)
     w_t = torch.tensor(w, dtype=torch.float32, device=device)
     z, ze = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device),
                              torch.tensor(np.where(w > 0, E, 1.0), dtype=torch.float32, device=device), w_t)
     x = profile_views(torch.tensor(T, dtype=torch.float64), torch.tensor(freqs, dtype=torch.float64),
                       z, ze, w_t, VIEWS, device)
     return x, global_features(z, ze, w_t), torch.tensor(labels, device=device)
+
+
+def batch(reals, quiet, B, rng, device):
+    return features(batch_arrays(reals, quiet, B, rng), device)
+
+
+class Batches(torch.utils.data.IterableDataset):
+    """Endless training batches built in worker processes (the light-curve work is NumPy on
+    the CPU; with several workers the GPU no longer waits for it)."""
+
+    def __init__(self, reals, quiet, B, seed):
+        self.reals, self.quiet, self.B, self.seed = reals, quiet, B, seed
+
+    def __iter__(self):
+        info = torch.utils.data.get_worker_info()
+        rng = np.random.default_rng([self.seed, info.id if info else 0])
+        while True:
+            yield batch_arrays(self.reals, self.quiet, self.B, rng)
 
 
 class ThermalGuard:
@@ -274,13 +300,14 @@ def main():
                     help="fold views per candidate; 1 0.5 2 = P with 2P and P/2 side by side")
     ap.add_argument("--steps", type=int, default=60000); ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=2e-3); ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--workers", type=int, default=6, help="processes building batches")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(a.seed); rng = np.random.default_rng(a.seed)
     if a.real == ["auto"]:
-        a.real = sorted(p.name[:-len("_verified.json")] for p in Path(a.data).glob("*_verified.json")
-                        if "asassn" not in p.name)               # the ASAS-SN-matched VVV stars are the benchmark
+        # every verified shard; benchmarks use only the val/test splits, which training never sees
+        a.real = sorted(p.name[:-len("_verified.json")] for p in Path(a.data).glob("*_verified.json"))
     tr_real = [Shard(f"{a.data}/{r}", "train") for r in a.real]
     va_real = [Shard(f"{a.data}/{r}", "val") for r in a.real]
     tr_quiet, va_quiet = Shard(f"{a.data}/{a.quiet}", "train"), Shard(f"{a.data}/{a.quiet}", "val")
@@ -297,11 +324,14 @@ def main():
     vrng = np.random.default_rng(999)
     val = [batch(va_real, va_quiet, a.batch, vrng, device) for _ in range(20)]   # fixed validation set
     guard, best, log = ThermalGuard(device), 1e9, []
+    loader = iter(torch.utils.data.DataLoader(Batches(tr_real, tr_quiet, a.batch, a.seed), batch_size=None,
+                                              num_workers=a.workers, prefetch_factor=4 if a.workers else None,
+                                              persistent_workers=a.workers > 0))
     t0 = time.time()
     for step in range(1, a.steps + 1):
         guard.check()
         model.train()
-        x, g, y = batch(tr_real, tr_quiet, a.batch, rng, device)
+        x, g, y = features(next(loader), device)
         loss = loss_fn(model.logits(x, g), y)
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if step % 1000 == 0 or step == a.steps:
