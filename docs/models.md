@@ -1,3 +1,11 @@
-# Models and benchmarks
+# Benchmarks and models
 
-(Filled in with the release benchmark.)
+```{include} ../README.md
+:start-after: "## How well it works"
+:end-before: "## Ways to use it"
+```
+
+```{include} ../README.md
+:start-after: "## Models"
+:end-before: "## Citing"
+```
