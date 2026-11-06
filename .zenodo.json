@@ -1,0 +1,10 @@
+{
+  "title": "NN_Periodogram: neural-network periodograms and false-alarm probabilities for astronomical time series",
+  "upload_type": "software",
+  "creators": [{"name": "Miller, Niall J."}],
+  "license": "MIT",
+  "keywords": ["astronomy", "periodogram", "variable stars", "time series", "neural network", "false alarm probability"],
+  "related_identifiers": [
+    {"identifier": "10.1093/rasti/rzae015", "relation": "isSupplementTo", "scheme": "doi"}
+  ]
+}

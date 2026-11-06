@@ -1,214 +1,128 @@
-# NN_Periodogram: A Flexible Two-Stage Neural Network Periodogram Analyser
+# NN_Periodogram
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+**Find the periods of variable stars in any survey's light curves, and tell real periods
+from harmonics and aliases.** A fast periodogram proposes candidate periods; a neural
+network, which sees each light curve folded at P, 2P and P/2 side by side, decides which
+one is real. Runs on a GPU or a CPU, on light curves from ten to hundreds of thousands of
+points.
 
-## Abstract
+```python
+import nn_periodogram as nnp
 
-NN_Periodogram implements a generalised two-stage approach to time series periodicity analysis with Neural Network-based False Alarm Probability (NN_FAP) estimation. The software is optimised for detecting short-period signals in astronomical datasets but remains applicable to diverse time series analysis contexts. By utilising complementary period ranges and multiple analytical methodologies, the framework enhances signal detection capabilities beyond traditional periodogram techniques.
+p = nnp.periodogram(time, mag, err)        # find the period
+p.best_period, p.best_fap                  # period and false-alarm probability of the search
+p.peaks                                    # runners-up: [(period, fold FAP), ...]
+p.plot()
 
-## Introduction
-
-Time series analysis in astronomical contexts frequently encounters challenges related to signal detection amidst noise, systematic effects, and irregular sampling. This implementation addresses these challenges through a novel architecture that combines neural network methodologies with traditional periodogram approaches. The framework is particularly suitable for short-period detection scenarios where conventional methods exhibit diminished efficacy.
-
-### Key Methodological Components
-
-- **Two-Stage Periodogram Framework**: Employs primary and complementary period ranges to enhance detection sensitivity
-- **Neural Network Integration**: Applies machine learning techniques for improved statistical rigour in false alarm probability estimation
-- **Multi-Method Analytical Approach**: Implements chunk-based, sliding window, and subtraction methodologies
-- **Automated Parameter Optimisation**: Provides mathematically justified parameter selection for period grid density and range determination
-
-## Mathematical Motivation and Justification
-
-### Theoretical Foundation
-
-The two-stage approach is mathematically motivated by the limitations inherent in conventional periodogram analyses when applied to complex time series data. Traditional methods often suffer from aliasing effects, harmonics, and systematic noise that can obscure legitimate periodicity signals.
-
-The theoretical framework underpinning this implementation addresses these limitations through:
-
-1. **Complementary Period Range Analysis**: The mathematical relationship between a period of interest (P) and its potential aliases can be expressed as:
-
-   ```
-   1/P_alias = 1/P + k*1/P_sampling
-   ```
-
-   where k is an integer and P_sampling represents the characteristic sampling frequency. By analysing complementary period ranges, we effectively account for these aliasing relationships.
-
-2. **Period Grid Optimisation**: The density of the period grid is derived:
-
-The software automatically calculates an optimal period grid based on:
-- The observational time span
-- Dynamic frequency resolution derived from the data characteristics
-- Oversampling factors for enhanced resolution around expected signals
-- Mathematical justification for period density derived from signal characteristics
-
-3. **Statistical Rigour via Neural Networks**: The neural network approach provides a robust estimation of false alarm probabilities through a non-parametric methodology that adapts to the characteristics of the input data, addressing limitations in traditional FAP calculations that often assume specific noise distributions.
-
-### Empirical Validation
-
-The efficacy of this approach has been empirically validated through extensive testing on simulated and real astronomical time series data. The two-stage approach consistently demonstrates enhanced sensitivity to weak periodic signals compared to single-stage methodologies, particularly in datasets with irregular sampling or systematic noise components.
-
-## Installation
-
-### Prerequisites
-
-- Python 3.6 or higher
-- Pip package manager
-
-### Standard Installation
+nnp.check_period(time, mag, 0.3127, err)   # is a known period right, or really 2P, P/2, an alias?
+nnp.fap(time, mag, [0.6254, 0.3127], err)  # false-alarm probability of given periods
+```
 
 ```bash
-# Clone the repository
-git clone https://github.com/nialljmiller/NN_Periodogram.git
-cd NN_Periodogram
-
-# Execute the installation script (automatically downloads model files)
-bash install.sh
+pip install nn-periodogram
 ```
 
-### Manual Installation
+## How well it works
 
-For environments requiring manual installation:
+Held-out stars from five surveys (never used for training or for choosing the model),
+scored against each catalogue's own period: **correct** within 1%, otherwise **harmonic**
+(k/n × the true period, k, n ≤ 4) or wrong. Every method searches the same frequency grid.
 
-```bash
-# Clone the repository
-git clone https://github.com/nialljmiller/NN_Periodogram.git
-cd NN_Periodogram
+| Survey (stars) | **NN_Periodogram** | PDM | Lomb-Scargle |
+|---|---|---|---|
+| OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **92.8%** | 79.1% | 66.0% |
+| Kepler eclipsing binaries (281) | **79.7%** | 47.3% | 5.0% |
+| TESS eclipsing binaries (459) | **78.6%** | | 9.4% |
+| VVV (near-infrared, sparse; ASAS-SN periods) | | | |
+| ASAS-SN / VSX, all classes (585) | **28.9%** | 23.8% | 17.1% |
 
-# Install the package with model download
-python setup.py download_model
-python setup.py install
+Lomb-Scargle numbers are identical for astropy, nifty-ls and an exact implementation. Most
+of the gain is in harmonics: Lomb-Scargle reports half the orbital period of an eclipsing
+binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–12%
+where theirs are 11–68%. Every difference from PDM is significant (paired McNemar test,
+p < 10⁻³). ASAS-SN is low for every method because many VSX classes (semi-regular,
+rotational, miscellaneous) have catalogue periods that a fold need not confirm; on strictly
+periodic classes NN_Periodogram gets 48.6% against PDM's 37.9% (validation split).
 
-# Alternative: development mode installation
-pip install -e .
-python setup.py download_model
-```
+**Robustness** (synthetic light curves with known periods; the same light curves for every
+method):
 
-### Direct Installation from GitHub
+| Case | NN_Periodogram | Lomb-Scargle | PDM |
+|---|---|---|---|
+| 100 / 300 / 1000 points | **82 / 93 / 99%** | 69 / 71 / 63% | 49 / 67 / 75% |
+| 5% outliers (5–15σ) | **71%** | 43% | 1% |
+| red noise and a trend | **89%** | 65% | 50% |
+| ground-based seasons, nightly sampling | **81%** | 67% | 53% |
+| real OGLE / ASAS-SN / Kepler / TESS / VVV cadences | **85 / 81 / 99 / 77 / 67%** | 65 / 65 / 67 / 53 / 58% | 67 / 57 / 87 / 59 / 31% |
 
-```bash
-pip install git+https://github.com/nialljmiller/NN_Periodogram.git
-```
+Below about 50 points at signal = noise, no method finds periods reliably.
 
-**Note:** Direct GitHub installation requires manual acquisition of model files:
+**False-alarm probability.** `best_fap` is the probability that a light curve with *no*
+periodic signal, of the same size, would produce as good a best fold somewhere in the
+search. It is calibrated on 10,500 searches of pure noise (white, red and outlier-ridden,
+on real cadences from all five surveys), because the best of hundreds of folds always looks
+good by chance. On fresh noise, `best_fap < 0.01` flags 0.2% of light curves and
+`best_fap < 0.1` about 6%. The network's FAP of the best fold alone is `best_fap_fold`.
 
-```bash
-# Download and extract model files
-wget https://nialljmiller.com/projects/FAP/model.tar.gz
-tar -xzf model.tar.gz
-mv model NN_FAP/model
-```
+**Speed** (median per star; same stars and grid; Apple M-series CPU and an RTX 3070 Ti):
 
-## Implementation
+| Light curves | NN_Periodogram CPU | NN_Periodogram GPU | PDM (CPU) | exact LS (CPU) | astropy LS | nifty-ls |
+|---|---|---|---|---|---|---|
+| ~400 points (OGLE, ASAS-SN, VVV) | 0.24–0.29 s | ~0.05 s | 0.09–0.11 s | 0.04–0.08 s | 0.05–0.09 s | 0.004 s |
+| ~65,000 points (Kepler, TESS) | 0.36 s | ~0.07 s | 9.9–17.7 s | 7.2–8.5 s | 0.08–0.12 s | 0.007 s |
 
-### Configuration Parameters
+A Lomb-Scargle periodogram is the first step of NN_Periodogram's search, so it cannot be
+faster than the fastest LS; it costs a fraction of a second per star and does not grow
+with the number of points.
 
-The software utilises an `inlist.txt` configuration file with the following parameter categories:
+## Ways to use it
 
-```
-# Input/output parameters
-input_file=detections.csv  # Path to input file (required)
-output_dir=./results       # Directory for output files
-output_prefix=periodogram  # Prefix for output filenames
+* **`periodogram(time, mag, err)`**: standard mode. Fast Lomb-Scargle and 3-harmonic
+  Lomb-Scargle periodograms (Press & Rybicki FFT method, in PyTorch) propose their 40
+  strongest peaks, plus 2×, ½×, 3× and ⅓× each; the network scores them all and the best
+  is refined. `proposers=("ls", "mhls", "pdm")` adds phase-dispersion candidates (slower,
+  about one point more accurate on eclipsing binaries).
+* **`periodogram(..., method="full")`**: the network scores every trial frequency itself.
+* **`check_period(time, mag, period, err)`**: for a period from a catalogue or another
+  method. Compares P with 2P, P/2, 3P, P/3, 3P/2, 2P/3 and the daily and yearly sampling
+  aliases and says which one the network prefers.
+* **`fap(time, mag, period, err)`**: the network's FAP for periods chosen in advance.
 
-# Data parameters
-time_col=None              # Column name for time values (None for auto-detection)
-flux_col=None              # Column name for flux values (None for auto-detection)
-error_col=None             # Column name for error values (None for auto-detection)
-file_format=None           # File format: csv, fits, txt, or None for auto-detection
-normalise=True             # Normalise flux by median
-remove_outliers=True       # Remove outliers using sigma clipping
-sigma=5.0                  # Sigma threshold for outlier removal
+Times are days (astropy `Time` and `Quantity` inputs are converted); magnitudes or fluxes;
+errors optional (estimated from point-to-point scatter if absent). Choose the hardware with
+`device="cuda"`, `"mps"` or `"cpu"`; the default is the best available.
 
-# Period search parameters
-period_min=0.01            # Minimum period to search (days)
-period_max=10.0            # Maximum period to search (days)
-n_periods=1000000          # Number of periods to sample
-oversample_factor=10       # Oversampling factor for period grid
-use_complementary=True     # Use complementary period range for method comparison
+## Models
 
-# NN_FAP parameters
-nn_fap_model_path=NN_FAP/model/  # Path to NN_FAP model directory (required)
-window_size=200            # Size of each window for sliding window method
-chunk_size=200             # Size of each chunk for chunk method
-step_size=50               # Step size between windows
-n_workers=None             # Number of worker processes (None for auto)
+Weights download on first use to `~/.cache/nn_periodogram` (or `$NN_PERIODOGRAM_CACHE`)
+from the GitHub release, with data.nialljmiller.com as a mirror, and are checked against a
+SHA-256.
 
-# Plotting parameters
-plot_log_scale=True        # Use logarithmic scale for period axes in plots
-```
+| name | | size |
+|---|---|---|
+| `periods-v4` (default) | Circular 1-D CNN over multi-resolution binned phase profiles of the folds at P, 2P and P/2, with global light-curve features. | 3 MB |
+| `legacy-2022` | The 2022 NN_FAP network (14 × GRU-1024; Miller et al. 2024), ported exactly from Keras. Exhaustive search only. | 343 MB |
 
-### Analytical Methodologies
+## Training
 
-#### Chunk Method
-This approach segments the time series into non-overlapping chunks, analysing each independently. The results are subsequently averaged to produce a robust periodogram. This technique effectively mitigates the influence of systematic errors and long-term trends in the dataset.
+About 380,000 light curves of known periodic variables, each labelled with the catalogue's
+own period refined by phase dispersion, and each kept only if our own Lomb-Scargle or
+phase-dispersion analysis independently recovers that period (or its double or half):
+OGLE-IV (179,000 RR Lyrae, Cepheids, δ Scuti, eclipsing binaries), ASAS-SN/VSX (96,000),
+VVV/PRIMVS (97,000), Kepler (2,500) and TESS (4,300) eclipsing binaries; 10% of the stars
+of every survey are held out for testing and 10% for validation. Batches mix real stars at
+their period (positives) or at wrong, nearby, harmonic and alias periods (negatives);
+signals injected into quiet VVV stars and into synthetic red, trended and outlier-ridden
+noise on every survey's cadences; magnitude-shuffled light curves; and pure noise. Each
+example is randomly thinned (10 points to all), flipped, time-reversed, cut by a season
+and given rescaled errors. Everything is in `training/`.
 
-#### Sliding Window Method
-In contrast to the chunk method, the sliding window methodology employs overlapping windows that traverse the time series. This approach provides enhanced sensitivity to signals that might be positioned at chunk boundaries in the alternative method.
+## Citing
 
-#### Subtraction Method
-This innovative approach enhances signal detection in specific period ranges by subtracting the complementary periodogram from the primary periodogram. This procedure effectively isolates signals of interest from background noise and systematic effects.
+Please cite the software (Zenodo DOI; see `CITATION.cff`) and
 
-## Output and Visualisation
+Miller N., Lucas P. W., Sun Y., Guo Z., Cooper W. J., Morris C., 2024, *The verification
+of periodicity with the use of recurrent neural networks*, RAS Techniques and Instruments,
+3, 224. [doi:10.1093/rasti/rzae015](https://doi.org/10.1093/rasti/rzae015)
 
-For each analysis, the following files are generated:
-
-- **periodogram_[filename].png**: Comprehensive periodogram visualisation displaying all methodologies
-- **periodogram_[filename]_folded_chunk_method.png**: Phase-folded light curve for the optimal period determined by the chunk method
-- **periodogram_[filename]_folded_sliding_window_method.png**: Phase-folded light curve for the optimal period determined by the sliding window method
-- **periodogram_[filename]_folded_subtraction_method.png**: Phase-folded light curve for the optimal period determined by the subtraction method
-- **periodogram_[filename]_results.json**: JSON file containing analytical results and optimal periods
-
-## Technical Implementation Details
-
-### Two-Stage Methodological Framework
-
-The two-stage approach functions as follows:
-
-1. **Primary Periodogram**: Focuses on the user-specified period range of interest, employing the sliding window method
-2. **Complementary Periodogram**: Samples the complementary period range to capture harmonics and aliases, utilising the chunk method
-3. **Subtraction Method**: Enhances signal detection by subtracting the complementary periodogram from the primary periodogram
-
-This approach demonstrates particular efficacy for:
-- Detecting weak signals in high-noise datasets
-- Distinguishing genuine periods from aliasing effects
-- Handling datasets with systematic errors or sampling gaps
-
-### Period Grid Optimisation
-
-The software automatically calculates an optimal period grid based on:
-- The observational time span
-- Nyquist frequency considerations
-- Oversampling factors for enhanced resolution around expected signals
-- Mathematical justification for period density derived from signal characteristics
-
-## Documentation
-
-- [JOSS Paper (html)](paper.md) - Journal of Open Source Software submission
-- [JOSS Paper (auto rendered pdf)](paper.pdf) - Journal of Open Source Software submission
-
-## Contributing
-
-Academic and technical contributions are welcomed. Please submit Pull Requests with appropriate documentation and test cases.
-
-## Licence
-
-This project is licenced under the MIT Licence - see the LICENSE file for details.
-
-## Acknowledgements
-
-- This implementation builds upon and extends the functionality of the NN_FAP package
-- We acknowledge the valuable feedback and suggestions from the astronomical time series analysis community
-
-## Citation
-
-If you utilise this software in your research, please cite:
-
-```
-@software{NN_Periodogram,
-  author       = {Miller, Niall},
-  title        = {NN\_Periodogram: Flexible Two-Stage Neural Network Periodogram Analyser},
-  year         = {2025},
-  url          = {https://github.com/username/NN_Periodogram}
-}
-```
+The pre-2026 code is at the `legacy-2025` tag.
