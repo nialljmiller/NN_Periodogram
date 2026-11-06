@@ -61,3 +61,68 @@ def pdm_theta(t, y, freqs, device, bins=(16, 32)):
     return best
 
 
+
+
+# ---------------------------------------------------------------------------
+# Fast Lomb-Scargle (Press & Rybicki 1989): O(N + M log M) instead of O(N M)
+# ---------------------------------------------------------------------------
+
+def _extirpolate(x, h, n, order=8):
+    """Spread values h at real grid positions x (0 <= x < n) onto n integer nodes so that
+    sums of any smooth function over the nodes reproduce sums over the points
+    (Lagrange weights over `order` neighbouring nodes)."""
+    real = x.dtype
+    base = torch.clamp(torch.floor(x).long() - (order // 2 - 1), 0, n - order)
+    out = torch.zeros(n, dtype=h.dtype, device=h.device)
+    nodes = base[:, None] + torch.arange(order, device=x.device)
+    dx = x[:, None] - nodes.to(real)                     # (N, order)
+    for i in range(order):
+        w = torch.ones_like(x)
+        for j in range(order):
+            if j != i:
+                w = w * dx[:, j] / (i - j)
+        out.index_add_(0, nodes[:, i], h * w.to(h.dtype))
+    return out
+
+
+def _trig_sums(t, h, f0, df, nf, oversample=4):
+    """sum_j h_j exp(2 pi i f t_j) for f = f0 + k df, k = 0..nf-1, via one FFT.
+    t must start at 0 and be in the working precision (float64 on CPU)."""
+    real = t.dtype
+    cplx = torch.complex128 if real == torch.float64 else torch.complex64
+    nfft = 1 << int(np.ceil(np.log2(oversample * nf)))
+    hc = h.to(cplx) * torch.exp(2j * np.pi * torch.remainder(f0 * t, 1.0)).to(cplx)   # shift to f0
+    x = torch.remainder(df * t * nfft, nfft)
+    grid = _extirpolate(x, hc, nfft)
+    return torch.fft.ifft(grid)[:nf] * nfft
+
+
+def gls_fast(t, y, dy, f0, df, nf, device=None):
+    """Generalised Lomb-Scargle power on the regular grid f0 + k df (k < nf), same
+    normalisation as gls(), via Press & Rybicki extirpolation and FFTs.
+
+    Runs in float64 on the CPU and float32 on GPUs; precise enough for finding peaks
+    (use gls() to evaluate a few exact values)."""
+    device = torch.device(device or "cpu")
+    real = torch.float64 if device.type == "cpu" else torch.float32
+    if device.type == "mps":                 # no float64 / limited complex support on MPS
+        device, real = torch.device("cpu"), torch.float64
+    t = np.asarray(t, float); y = np.asarray(y, float); dy = np.asarray(dy, float)
+    w = 1.0 / dy ** 2
+    w = w / w.sum()
+    y = y - (w * y).sum()
+    yy = float((w * y * y).sum())
+    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device).to(real)
+    wt = torch.tensor(w, dtype=real, device=device)
+    yt = torch.tensor(y, dtype=real, device=device)
+    A = _trig_sums(tt, wt, f0, df, nf)                    # sum w e^{iwt}
+    B = _trig_sums(tt, wt * yt, f0, df, nf)               # sum w y e^{iwt}
+    A2 = _trig_sums(tt, wt, 2 * f0, 2 * df, nf)           # sum w e^{2iwt}
+    C, S = A.real, A.imag
+    YC, YS = B.real, B.imag
+    CC = 0.5 * (1 + A2.real) - C * C
+    SS = 0.5 * (1 - A2.real) - S * S
+    CS = 0.5 * A2.imag - C * S
+    D = CC * SS - CS * CS
+    p = (SS * YC ** 2 + CC * YS ** 2 - 2 * CS * YC * YS) / (yy * D)
+    return p.cpu().numpy().astype(np.float64)

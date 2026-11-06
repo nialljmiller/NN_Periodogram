@@ -61,3 +61,17 @@ def test_astropy_inputs_match_plain():
     np.testing.assert_allclose(plain, with_units, rtol=1e-6)
     as_time = nnp.fap(Time(t, format="mjd"), m, (period * u.day).to(u.hour), err=e, model="test-net", device="cpu")
     np.testing.assert_allclose(plain[0], as_time, rtol=1e-4)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_fast_ls_matches_exact(device):
+    from nn_periodogram.classical import gls_fast
+    rng = np.random.default_rng(3)
+    t = np.sort(rng.uniform(0, 2000, 400)); y = np.sin(2 * np.pi * t / 0.613) + rng.normal(0, .5, 400)
+    e = rng.uniform(.3, .7, 400)
+    f0, df, nf = 0.001, 1 / 6000, 30000
+    f = f0 + df * np.arange(nf)
+    exact = gls(t, y, e, f, torch.device("cpu"))
+    fast = gls_fast(t, y, e, f0, df, nf, device)
+    assert np.abs(fast - exact).max() < (2e-3 if device == "cuda" else 1e-3)   # ample for locating peaks
+    assert abs(f[np.argmax(fast)] - f[np.argmax(exact)]) <= df
