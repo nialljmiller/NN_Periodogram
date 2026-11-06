@@ -43,10 +43,14 @@ def main():
             for v in ver:
                 i = v["index"]
                 t = np.asarray(d["time"][off[i]:off[i + 1]], float); m = np.asarray(d["mag"][off[i]:off[i + 1]], float)
+                if len(t) > 20000:                      # plenty to locate the fold minimum
+                    k = np.sort(np.random.default_rng(i).choice(len(t), 20000, replace=False)); t, m = t[k], m[k]
                 fc = meta[i]["candidate_freqs"][0]; span = np.ptp(t)
                 fine = np.linspace(fc - 1 / span, fc + 1 / span, 201)
                 fine = fine[fine > 0]
                 out.append({"index": i, "freq": float(fine[int(np.argmin(pdm_theta(t, m, fine, dev)))])})
+                if len(out) % 500 == 0:
+                    print(f"  {name}: {len(out)}/{len(ver)}  {time.time() - t0:.0f}s", flush=True)
         json.dump(out, open(Path(a.data) / f"{name}_labels.json", "w"))
         print(f"{name:<18} {len(out):7d} labels  ({time.time() - t0:.0f}s)", flush=True)
 
