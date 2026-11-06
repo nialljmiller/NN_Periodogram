@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from . import hub
-from .classical import gls, pdm_theta
+from .classical import gls, gls_fast, mhls_fast, pdm_theta
 from .features import (channels_from_phase, fold_phase, global_features, prepare, profile_views,
                        robust_normalise)
 
@@ -168,7 +168,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
-                prefer_shorter=None, method=None, n_candidates=10, proposers=("ls", "pdm"),
+                prefer_shorter=None, method=None, n_candidates=40, proposers=("ls",),
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """Find the period of a light curve.
 
@@ -182,16 +182,17 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     oversample : float
         Grid samples per 1/baseline.
     method : {"hybrid", "full"}, optional
-        ``"hybrid"`` (default for the new models): GPU Lomb-Scargle and phase-dispersion
-        periodograms propose candidates (their best peaks and each one's 2x, 1/2x, 3x and
-        1/3x), and the network chooses among them. Costs about as much as LS + PDM.
+        ``"hybrid"`` (default for the new models): a fast Lomb-Scargle periodogram proposes
+        candidates (its best peaks and each one's 2x, 1/2x, 3x and 1/3x) and the network
+        chooses among them.
         ``"full"``: the network scores every grid frequency, then refines the best
         ``n_peaks`` peaks. Slower, and independent of the classical methods.
     n_candidates : int
-        Hybrid: peaks taken from each classical periodogram.
-    proposers : tuple of {"ls", "pdm"}
-        Hybrid: which classical periodograms propose candidates. ``("ls",)`` alone is
-        cheaper still.
+        Hybrid: peaks taken from each proposing periodogram.
+    proposers : tuple of {"ls", "mhls", "pdm"}
+        Hybrid: periodograms that propose candidates. ``"ls"`` (fast generalised
+        Lomb-Scargle) and ``"mhls"`` (fast 3-harmonic Lomb-Scargle) cost O(N + M log M);
+        ``"pdm"`` (phase dispersion) costs O(N M) and is mainly for comparison.
     n_peaks, refine : int
         Full: peaks refined, and fine-grid points per side.
     prefer_shorter : bool, optional
@@ -262,14 +263,33 @@ def _top(score, n, sep=5):
     return picked
 
 
-def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-            proposers=("ls", "pdm")):
-    """Classical periodograms propose, the network decides.
+HARMONICS = (1.0, 2.0, 0.5, 3.0, 1 / 3)
 
-    Lomb-Scargle and phase dispersion run over the full grid on the GPU (cheap).
-    Their best n_candidates peaks each, refined by the same method, plus 2x, 1/2x,
-    3x and 1/3x of every one, are scored by the network; the lowest FAP wins.
-    About a hundred network evaluations per star instead of one per grid point.
+
+def _grid_peaks(power, n, f0, df, sep=5):
+    """Frequencies of the n strongest grid peaks (>= sep steps apart), each located to a
+    fraction of a grid step by a parabola through it and its neighbours."""
+    out = []
+    for i in _top(power, n, sep):
+        x = float(i)
+        if 0 < i < len(power) - 1:
+            a, b, c = power[i - 1], power[i], power[i + 1]
+            den = a - 2 * b + c
+            if den < 0:
+                x += 0.5 * (a - c) / den
+        out.append(f0 + df * x)
+    return out
+
+
+def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
+            proposers=("ls",)):
+    """Fast classical periodograms propose, the network decides.
+
+    Proposers run over the whole frequency grid in O(N + M log M) ("ls": generalised
+    Lomb-Scargle, "mhls": 3-harmonic Lomb-Scargle; "pdm": brute-force phase dispersion,
+    O(N M), optional). Their n_candidates strongest peaks and each one's 2x, 1/2x, 3x and
+    1/3x are scored by the network, which sees the folds at P, 2P and P/2 together; the
+    lowest FAP wins and only that period is refined exactly.
     """
     t, m = np.asarray(time, float), np.asarray(mag, float)
     e = estimate_errors(t, m) if err is None else np.asarray(err, float)
@@ -278,15 +298,19 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     span = np.ptp(t)
     df = 1.0 / (oversample * span)
     fmin = fmin or 2.0 / span
-    freqs = np.arange(fmin, fmax, df)
-    methods = {"ls": lambda f: gls(t, m, e, f, device), "pdm": lambda f: -pdm_theta(t, m, f, device)}
+    nf = max(1, int(np.floor((fmax - fmin) / df)))
     cands = []
     for name in proposers:
-        fn = methods[name]
-        for i in _top(fn(freqs), n_candidates):
-            fine = np.linspace(freqs[i] - df, freqs[i] + df, 41)
-            cands.append(fine[int(np.argmax(fn(fine)))])
-    cands = np.array([c * r for c in cands for r in (1.0, 2.0, 0.5, 3.0, 1 / 3)])
+        if name == "ls":
+            power = gls_fast(t, m, e, fmin, df, nf, device)
+        elif name == "mhls":
+            power = mhls_fast(t, m, e, fmin, df, nf, 3, device)
+        elif name == "pdm":
+            power = -pdm_theta(t, m, fmin + df * np.arange(nf), device)
+        else:
+            raise ValueError(f"unknown proposer {name!r}")
+        cands += _grid_peaks(power, n_candidates, fmin, df)
+    cands = np.array([c * r for c in cands for r in HARMONICS])
     cands = np.unique(np.round(cands[(cands >= fmin) & (cands <= fmax)], 12))
     f_ap = _score(t, m, cands, net, device, batch, False, e)
     order = np.argsort(f_ap)
@@ -297,6 +321,11 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
         best, best_f = half[0]
+    # exact refinement of the winner only: tightest fold within +-1 grid step
+    fine = np.linspace(1 / best - df, 1 / best + df, 41)
+    fine = fine[fine > 0]
+    best = 1.0 / fine[int(np.argmin(pdm_theta(t, m, fine, device)))]
+    peaks[0 if not note else next(i for i, p in enumerate(peaks) if p == half[0])] = (best, best_f)
     o = np.argsort(cands)
     return Periodogram(cands[o], f_ap[o], peaks, best, best_f, note)
 

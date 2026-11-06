@@ -78,11 +78,34 @@ def from_keras_h5(path):
     return m.eval()
 
 
+class CircConv1d(nn.Conv1d):
+    """Circularly padded 1-D convolution, same parameters as nn.Conv1d(padding_mode="circular").
+
+    On the CPU it runs as one matrix multiply over gathered taps, which BLAS does about
+    10x faster than PyTorch's direct CPU convolution for these small sequences; GPUs keep
+    the native (cuDNN / MPS) convolution."""
+
+    def __init__(self, c_in, c_out, k, dilation=1):
+        super().__init__(c_in, c_out, k, padding=(k // 2) * dilation, dilation=dilation, padding_mode="circular")
+
+    def forward(self, x):
+        if x.device.type != "cpu" or torch.is_grad_enabled():
+            return super().forward(x)
+        B, C, L = x.shape
+        K, d = self.kernel_size[0], self.dilation[0]
+        idx = (torch.arange(L)[None, :] + (torch.arange(K)[:, None] - K // 2) * d) % L      # (K, L)
+        cols = x[:, :, idx]                                                                  # (B, C, K, L)
+        cols = cols.permute(0, 3, 2, 1).reshape(B * L, K * C)
+        w = self.weight.permute(0, 2, 1).reshape(self.out_channels, K * C)
+        out = torch.addmm(self.bias, cols, w.T) if self.bias is not None else cols @ w.T
+        return out.reshape(B, L, -1).permute(0, 2, 1)
+
+
 class _Res(nn.Module):
     def __init__(self, c, dilation):
         super().__init__()
-        self.c1 = nn.Conv1d(c, c, 5, padding=2 * dilation, dilation=dilation, padding_mode="circular")
-        self.c2 = nn.Conv1d(c, c, 5, padding=2 * dilation, dilation=dilation, padding_mode="circular")
+        self.c1 = CircConv1d(c, c, 5, dilation)
+        self.c2 = CircConv1d(c, c, 5, dilation)
         # GroupNorm, not BatchNorm: no running statistics to be thrown off by extreme light curves
         self.n1, self.n2 = nn.GroupNorm(8, c), nn.GroupNorm(8, c)
 
@@ -102,7 +125,7 @@ class PeriodsNet(nn.Module):
         # (1.0, 0.5, 2.0) = the candidate period P with 2P and P/2 side by side.
         self.views = tuple(views)
         n_in = 16 * len(self.views)
-        self.stem = nn.Sequential(nn.Conv1d(n_in, width, 5, padding=2, padding_mode="circular"),
+        self.stem = nn.Sequential(CircConv1d(n_in, width, 5),
                                   nn.GroupNorm(8, width), nn.ReLU())
         self.blocks = nn.Sequential(*[_Res(width, d) for d in dilations])
         self.glob = nn.Sequential(nn.Linear(n_global, 32), nn.ReLU())

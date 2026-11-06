@@ -9,8 +9,10 @@ LS/PDM-verified label. Every method searches the same grid (2/T to fmax,
 or wrong.
 
 Methods:
-    ls, pdm                         classical, best refined peak
-    hybrid:NAME:WEIGHTS[:ls]        nn_periodogram hybrid (":ls" = LS-only proposals)
+    ls, pdm                         brute-force GLS / PDM on the GPU or CPU (ours), best refined peak
+    astropy, nifty                  astropy LombScargle (method="fast") and nifty-ls: the fastest
+                                    published Lomb-Scargle implementations, for fair timing
+    hybrid:NAME:WEIGHTS[:P1+P2]     nn_periodogram hybrid; proposers default "ls" (e.g. ":ls+mhls")
 
 For each hybrid star the rows record both tie-break settings (prefer_shorter
 off and on, from the same scores) and the candidate recall (was the true period,
@@ -69,12 +71,27 @@ def stars(data, prefix, n, seed, split):
     return [out[k] for k in pick]
 
 
+def ls_external(t, m, e, impl, fmax, oversample=3.0, device="cpu"):
+    """Best period from astropy's or nifty-ls's Lomb-Scargle on the benchmark grid."""
+    span = np.ptp(t); df = 1 / (oversample * span); f0 = 2 / span; nf = int((fmax - f0) / df)
+    if impl == "astropy":
+        from astropy.timeseries import LombScargle
+        p = LombScargle(t, m, e).power(f0 + df * np.arange(nf), method="fast")
+    else:
+        import nifty_ls
+        backend = "cufinufft" if str(device).startswith("cuda") else "finufft"
+        p = nifty_ls.lombscargle(t, m, e, fmin=f0, fmax=f0 + df * (nf - 1), Nf=nf, backend=backend).power
+    return 1 / (f0 + df * int(np.argmax(p)))
+
+
 def near(f_cands, p, tol=0.01):
     return bool(np.any(np.abs(1 / np.asarray(f_cands) / p - 1) < tol))
 
 
 def run(a):
     device = torch.device(a.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if device.type == "cpu":
+        torch.set_num_threads(a.threads)
     done = set()
     if Path(a.out).exists():
         done = {(r["survey"], r["method"]) for r in map(json.loads, open(a.out))}
@@ -96,9 +113,11 @@ def run(a):
                     t0 = time.time()
                     if method in ("ls", "pdm"):
                         row["p"] = search(t, m, e, method, a.fmax, device)
+                    elif method in ("astropy", "nifty"):
+                        row["p"] = ls_external(t, m, e, method, a.fmax, device=device)
                     else:
                         parts = method.split(":")
-                        proposers = ("ls",) if len(parts) > 3 and parts[3] == "ls" else ("ls", "pdm")
+                        proposers = tuple(parts[3].split("+")) if len(parts) > 3 else ("ls",)
                         res = nn_periodogram.periodogram(t, m, err=e, fmax=a.fmax, model=parts[1], weights=parts[2],
                                                          device=device, method="hybrid", prefer_shorter=False,
                                                          proposers=proposers)
@@ -170,6 +189,7 @@ def main():
     ap.add_argument("--split", default="val", choices=["val", "test"])
     ap.add_argument("--n", type=int, default=600); ap.add_argument("--fmax", type=float, default=10.0)
     ap.add_argument("--seed", type=int, default=11); ap.add_argument("--device")
+    ap.add_argument("--threads", type=int, default=4, help="CPU threads when --device cpu")
     a = ap.parse_args()
     if a.summary:
         summary(a.summary)
