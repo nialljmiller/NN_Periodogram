@@ -51,6 +51,11 @@ method because many VSX classes (semi-regular, rotational, miscellaneous) have c
 periods that a fold need not confirm, and for a third of its stars no periodogram puts the
 true period among its strongest peaks.
 
+**Against the 2022 network.** On the same 100 test stars per survey, the original NN FAP
+network (`legacy-2022`, exhaustive search) recovers 52% (OGLE), 22% (Kepler), 10% (TESS),
+36% (VVV) and 16% (ASAS-SN) of periods, where NN_Periodogram recovers 91, 82, 81, 50 and 28%;
+it also needs 6–14 s per star on a GPU, about 200× longer.
+
 **Robustness** (synthetic light curves with known periods; the same light curves for every
 method):
 
