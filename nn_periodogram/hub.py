@@ -22,27 +22,22 @@ MIRROR = "https://data.nialljmiller.com/nn_periodogram/models"
 MODELS = {
     "legacy-2022": {
         "file": "nn_fap_legacy_2022.pt",
-        "sha256": None,          # filled in when the release is cut
+        "sha256": "539143bf1e117de9125f3d9543456bea651a504ea2eda2007185164332af54c7",
         "release": "v1.0.0",
         "build": LegacyNNFAP,
         "description": "2022 NN_FAP network (14 x GRU-1024), ported exactly from Keras.",
     },
-    "periods-v1": {
-        "file": "nn_periodogram_v1.pt",
-        "sha256": None,
-        "release": "v1.0.0",
-        "build": PeriodsNet,
-        "description": "Circular CNN on a multi-resolution phase profile; VVV + OGLE + injections (2026).",
-    },
-    "periods-v3": {
-        "file": "nn_periodogram_v3.pt",
-        "sha256": None,
+    "periods-v4": {
+        "file": "nn_periodogram_v4.pt",
+        "sha256": "2d43d2f4080ca6bb4933e687267dea0d42a783fe5e0c59943cdb7de731ee1e1d",
         "release": "v1.0.0",
         "build": partial(PeriodsNet, views=(1.0, 0.5, 2.0)),
-        "description": "Sees the folds at P, 2P and P/2 side by side; all surveys (2026).",
+        "prefer_shorter": False,
+        "description": "Circular CNN seeing the folds at P, 2P and P/2 side by side; trained on OGLE, "
+                       "Kepler, TESS, ASAS-SN and VVV light curves plus injected signals (2026).",
     },
 }
-DEFAULT = "legacy-2022"
+DEFAULT = "periods-v4"
 
 
 def cache_dir():

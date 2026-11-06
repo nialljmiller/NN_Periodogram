@@ -168,7 +168,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
-                prefer_shorter=None, method=None, n_candidates=40, proposers=("ls",),
+                prefer_shorter=None, method=None, n_candidates=40, proposers=("ls", "mhls"),
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """Find the period of a light curve.
 
@@ -182,9 +182,9 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     oversample : float
         Grid samples per 1/baseline.
     method : {"hybrid", "full"}, optional
-        ``"hybrid"`` (default for the new models): a fast Lomb-Scargle periodogram proposes
-        candidates (its best peaks and each one's 2x, 1/2x, 3x and 1/3x) and the network
-        chooses among them.
+        ``"hybrid"`` (default for the new models): fast Lomb-Scargle and multi-harmonic
+        Lomb-Scargle periodograms propose candidates (their best peaks and each one's 2x,
+        1/2x, 3x and 1/3x) and the network chooses among them.
         ``"full"``: the network scores every grid frequency, then refines the best
         ``n_peaks`` peaks. Slower, and independent of the classical methods.
     n_candidates : int
@@ -244,7 +244,7 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     best, best_f = peaks[0]
     note = ""
     # A model that cannot tell P from 2P scores them alike; then the shorter of a tied pair is
-    # reported (on the benchmark this helps both the 2022 model and periods-v1).
+    # reported (this helps the 2022 model; periods-v4 sees 2P and P/2 itself and needs no help).
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
     if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
@@ -282,7 +282,7 @@ def _grid_peaks(power, n, f0, df, sep=5):
 
 
 def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-            proposers=("ls",)):
+            proposers=("ls", "mhls")):
     """Fast classical periodograms propose, the network decides.
 
     Proposers run over the whole frequency grid in O(N + M log M) ("ls": generalised

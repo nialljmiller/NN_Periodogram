@@ -13,6 +13,7 @@ Methods:
     astropy, nifty                  astropy LombScargle (method="fast") and nifty-ls: the fastest
                                     published Lomb-Scargle implementations, for fair timing
     hybrid:NAME:WEIGHTS[:P1+P2]     nn_periodogram hybrid; proposers default "ls" (e.g. ":ls+mhls")
+    full:NAME:WEIGHTS               exhaustive network search over the whole grid (the 2022 model)
 
 For each hybrid star the rows record both tie-break settings (prefer_shorter
 off and on, from the same scores) and the candidate recall (was the true period,
@@ -115,6 +116,10 @@ def run(a):
                         row["p"] = search(t, m, e, method, a.fmax, device)
                     elif method in ("astropy", "nifty"):
                         row["p"] = ls_external(t, m, e, method, a.fmax, device=device)
+                    elif method.startswith("full:"):        # exhaustive network search (e.g. the 2022 model)
+                        _, model, weights = method.split(":")
+                        row["p"] = nn_periodogram.periodogram(t, m, err=e, fmax=a.fmax, model=model, weights=weights,
+                                                              device=device, method="full").best_period
                     else:
                         parts = method.split(":")
                         proposers = tuple(parts[3].split("+")) if len(parts) > 3 else ("ls",)
