@@ -151,8 +151,9 @@ class Periodogram:
     fap: np.ndarray
     peaks: list = field(default_factory=list)      # [(period, fap)] best first, after refinement
     best_period: float = np.nan
-    best_fap: float = np.nan
+    best_fap: float = np.nan        # FAP of the search: corrected for the many periods tried
     note: str = ""
+    best_fap_fold: float = np.nan   # the network's FAP of the best fold alone
 
     @property
     def period(self):
@@ -168,7 +169,7 @@ class Periodogram:
 
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
-                prefer_shorter=None, method=None, n_candidates=40, proposers=("ls", "mhls"),
+                prefer_shorter=None, method=None, n_candidates=40, proposers=("ls", "mhls"), calibrated=True,
                 model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
     """Find the period of a light curve.
 
@@ -199,14 +200,21 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
         When the best period's half scores within 25% of it, report the half (and say so in
         ``note``). The default belongs to the model: on for models that cannot see 2P and P/2
         side by side, off for those that can.
+    calibrated : bool
+        Report ``best_fap`` as the false-alarm probability of the whole search: the fraction
+        of pure-noise light curves of similar size (real survey cadences; white, red and
+        outlier-ridden noise) whose best fold scores as well. Searching hundreds of periods
+        makes some fold look good by chance, so the best fold's own FAP
+        (``best_fap_fold``) is far too optimistic for detection. Default True.
     model, device, batch, weights, exact
         As for :func:`fap`.
 
     Returns
     -------
     Periodogram
-        ``best_period``, ``best_fap``, ``peaks`` [(period, fap), ...], the scored ``freq``
-        and ``fap`` arrays, a ``note``, and ``plot()``.
+        ``best_period``, ``best_fap`` (of the search), ``best_fap_fold``, ``peaks``
+        [(period, fold FAP), ...], the scored ``freq`` and ``fap`` arrays, a ``note``, and
+        ``plot()``.
     """
     device = torch.device(device) if device else hub.default_device()
     net = _model(model, device, weights)
@@ -216,8 +224,9 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     if method is None:          # the 2022 network only works as an exhaustive search
         method = "full" if getattr(net, "input_kind", "legacy") == "legacy" else "hybrid"
     if method == "hybrid":
-        return _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-                       proposers)
+        res = _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
+                      proposers)
+        return _calibrate(res, model, np.isfinite(np.asarray(mag, float)).sum(), calibrated)
     t, m = np.asarray(time, float), np.asarray(mag, float)
     span = np.ptp(np.asarray(time, float)[np.isfinite(time)])
     df = 1.0 / (oversample * span)
@@ -249,7 +258,26 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     if prefer_shorter and half and half[0][1] <= 1.25 * best_f:
         note = f"twice-period alias: {best:.6g} d scores about the same as {half[0][0]:.6g} d; reporting the shorter"
         best, best_f = half[0]
-    return Periodogram(freqs, f_ap, peaks, best, best_f, note)
+    return _calibrate(Periodogram(freqs, f_ap, peaks, best, best_f, note), model,
+                      np.isfinite(np.asarray(mag, float)).sum(), calibrated and method == "hybrid")
+
+
+def _calibrate(res, model, n_points, calibrated):
+    """Fold FAP of the best period -> FAP of the search (see calibrate_fap.py)."""
+    res.best_fap_fold = res.best_fap
+    table = hub.calibration(model) if calibrated else None
+    if table is None:
+        return res
+    sig = -np.log10(max(res.best_fap_fold, 1e-12))
+    lg = np.log10(max(n_points, 1))
+    b = next((b for b in table["bins"] if lg < b["log10_n"][1]), table["bins"][-1])
+    null = np.asarray(b["null_sig"])
+    tail = b["tail"]
+    if sig > tail["start"]:
+        res.best_fap = float(tail["frac"] * np.exp(-tail["rate"] * (sig - tail["start"])))
+    else:
+        res.best_fap = float((np.sum(null >= sig) + 1) / (len(null) + 1))
+    return res
 
 
 def _top(score, n, sep=5):

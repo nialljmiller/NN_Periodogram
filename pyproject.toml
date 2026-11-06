@@ -35,5 +35,8 @@ Issues = "https://github.com/nialljmiller/NN_Periodogram/issues"
 [tool.setuptools.packages.find]
 include = ["nn_periodogram*"]
 
+[tool.setuptools.package-data]
+nn_periodogram = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

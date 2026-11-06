@@ -105,6 +105,13 @@ def package(state_dict_path, out_path, **config):
     return _sha256(out_path)
 
 
+def calibration(name):
+    """Noise calibration of a model's search FAP, if the package ships one."""
+    import json
+    path = Path(__file__).parent / "data" / f"calibration_{name}.json"
+    return json.load(open(path)) if path.exists() else None
+
+
 def default_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
