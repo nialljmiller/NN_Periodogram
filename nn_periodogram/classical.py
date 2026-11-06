@@ -69,19 +69,19 @@ def pdm_theta(t, y, freqs, device, bins=(16, 32)):
 
 def _extirpolate(x, h, n, order=8):
     """Spread values h at real grid positions x (0 <= x < n) onto n integer nodes so that
-    sums of any smooth function over the nodes reproduce sums over the points
-    (Lagrange weights over `order` neighbouring nodes)."""
+    sums of any smooth n-periodic function over the nodes reproduce sums over the points
+    (Lagrange weights over `order` neighbouring nodes, wrapping around the grid)."""
     real = x.dtype
-    base = torch.clamp(torch.floor(x).long() - (order // 2 - 1), 0, n - order)
-    out = torch.zeros(n, dtype=h.dtype, device=h.device)
+    base = torch.floor(x).long() - (order // 2 - 1)
     nodes = base[:, None] + torch.arange(order, device=x.device)
     dx = x[:, None] - nodes.to(real)                     # (N, order)
+    out = torch.zeros(n, dtype=h.dtype, device=h.device)
     for i in range(order):
         w = torch.ones_like(x)
         for j in range(order):
             if j != i:
                 w = w * dx[:, j] / (i - j)
-        out.index_add_(0, nodes[:, i], h * w.to(h.dtype))
+        out.index_add_(0, torch.remainder(nodes[:, i], n), h * w.to(h.dtype))
     return out
 
 
@@ -126,3 +126,46 @@ def gls_fast(t, y, dy, f0, df, nf, device=None):
     D = CC * SS - CS * CS
     p = (SS * YC ** 2 + CC * YS ** 2 - 2 * CS * YC * YS) / (yy * D)
     return p.cpu().numpy().astype(np.float64)
+
+
+def mhls_fast(t, y, dy, f0, df, nf, nterms=2, device=None):
+    """Multi-harmonic (Fourier series, `nterms` harmonics, floating mean) Lomb-Scargle power
+    on the grid f0 + k df: the fraction of weighted variance explained at each frequency.
+    Non-sinusoidal signals (eclipsing binaries, RR Lyrae) peak at their true period rather
+    than a harmonic. O(N + M log M) via the same FFT trig sums as gls_fast (Palmer 2009);
+    nterms=1 is the generalised Lomb-Scargle."""
+    device = torch.device(device or "cpu")
+    real = torch.float64 if device.type == "cpu" else torch.float32
+    if device.type == "mps":
+        device, real = torch.device("cpu"), torch.float64
+    t = np.asarray(t, float); y = np.asarray(y, float); dy = np.asarray(dy, float)
+    w = 1.0 / dy ** 2
+    w = w / w.sum()
+    y = y - (w * y).sum()
+    yy = float((w * y * y).sum())
+    tt = torch.tensor(t - t.min(), dtype=torch.float64, device=device).to(real)
+    wt = torch.tensor(w, dtype=real, device=device)
+    yt = torch.tensor(y, dtype=real, device=device)
+    K = nterms
+    A = [torch.ones(nf, dtype=tt.dtype, device=device).to(torch.complex128 if real == torch.float64 else torch.complex64)]
+    A += [_trig_sums(tt, wt, m * f0, m * df, nf) for m in range(1, 2 * K + 1)]   # sum w e^{i m w t}
+    B = [_trig_sums(tt, wt * yt, k * f0, k * df, nf) for k in range(1, K + 1)]   # sum w y e^{i k w t}
+    Cm = lambda m: A[abs(m)].real                                               # noqa: E731
+    Sm = lambda m: torch.sign(torch.tensor(float(m))) * A[abs(m)].imag if m else torch.zeros_like(A[0].real)  # noqa: E731
+    n = 2 * K + 1
+    M = torch.empty(nf, n, n, dtype=real, device=device)
+    rhs = torch.zeros(nf, n, dtype=real, device=device)
+    M[:, 0, 0] = 1.0
+    for k in range(1, K + 1):
+        ck, sk = 2 * k - 1, 2 * k
+        M[:, 0, ck] = M[:, ck, 0] = Cm(k)
+        M[:, 0, sk] = M[:, sk, 0] = Sm(k)
+        rhs[:, ck], rhs[:, sk] = B[k - 1].real, B[k - 1].imag
+        for l in range(1, K + 1):
+            cl, sl = 2 * l - 1, 2 * l
+            M[:, ck, cl] = 0.5 * (Cm(k - l) + Cm(k + l))
+            M[:, sk, sl] = 0.5 * (Cm(k - l) - Cm(k + l))
+            M[:, ck, sl] = M[:, sl, ck] = 0.5 * (Sm(k + l) - Sm(k - l))
+    M = M + 1e-10 * torch.eye(n, dtype=real, device=device)
+    sol = torch.linalg.solve(M, rhs[..., None])[..., 0]
+    return ((rhs * sol).sum(1) / yy).cpu().numpy().astype(np.float64)
