@@ -37,6 +37,7 @@ from nn_periodogram.classical import pdm_theta  # noqa: E402
 from train import signal  # noqa: E402
 
 FMAX = 10.0
+NIFTY = None   # nifty-ls worker process (see nifty_worker.py)
 
 
 def make_signal(t, P, shape, rng):
@@ -47,8 +48,7 @@ def make_signal(t, P, shape, rng):
 def classical(t, m, e, method):
     span = np.ptp(t); df = 1 / (3 * span); f0 = 2 / span; nf = int((FMAX - f0) / df)
     if method == "ls":
-        import nifty_ls
-        p = nifty_ls.lombscargle(t, m, e, fmin=f0, fmax=f0 + df * (nf - 1), Nf=nf).power
+        p, _ = NIFTY.power(t, m, e, f0, df, nf)
         return 1 / (f0 + df * int(np.argmax(p))), float(np.max(p))
     th = pdm_theta(t, m, f0 + df * np.arange(nf), torch.device("cpu"))
     return 1 / (f0 + df * int(np.argmin(th))), float(np.min(th))
@@ -79,6 +79,9 @@ def main():
     ap.add_argument("--n", type=int, default=150); ap.add_argument("--device", default="cpu")
     ap.add_argument("--snr", type=float, default=1.0, help="signal rms / noise rms")
     a = ap.parse_args()
+    global NIFTY
+    from nifty_worker import Nifty
+    NIFTY = Nifty()
     rng = np.random.default_rng(2026)
     methods = ["nn", "ls", "pdm"]
     cases = {}

@@ -20,6 +20,7 @@ import nn_periodogram as nnp  # noqa: E402
 from nn_periodogram.classical import gls, pdm_theta  # noqa: E402
 
 FMAX = 10.0
+NIFTY = None   # nifty-ls worker process (see nifty_worker.py)
 
 
 def grid(t):
@@ -29,11 +30,12 @@ def grid(t):
 
 def run(method, t, m, e):
     f0, df, nf = grid(t)
+    s = time.perf_counter()
     if method == "nn_periodogram":
-        return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu").best_period
+        return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu").best_period, time.perf_counter() - s
     if method == "nifty-ls":
-        import nifty_ls
-        p = nifty_ls.lombscargle(t, m, e, fmin=f0, fmax=f0 + df * (nf - 1), Nf=nf).power
+        p, inside = NIFTY.power(t, m, e, f0, df, nf)
+        return 1 / (f0 + df * int(np.argmax(p))), inside
     elif method == "astropy LS (fast)":
         from astropy.timeseries import LombScargle
         p = LombScargle(t, m, e).power(f0 + df * np.arange(nf), method="fast")
@@ -41,7 +43,9 @@ def run(method, t, m, e):
         p = gls(t, m, e, f0 + df * np.arange(nf), torch.device("cpu"))
     elif method == "PDM":
         p = -pdm_theta(t, m, f0 + df * np.arange(nf), torch.device("cpu"))
-    return 1 / (f0 + df * int(np.argmax(p)))
+    else:
+        raise ValueError(method)
+    return 1 / (f0 + df * int(np.argmax(p))), time.perf_counter() - s
 
 
 def main():
@@ -49,6 +53,9 @@ def main():
     ap.add_argument("--sample", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--per-survey", type=int, default=50); ap.add_argument("--threads", type=int, default=0)
     a = ap.parse_args()
+    global NIFTY
+    from nifty_worker import Nifty
+    NIFTY = Nifty()
     if a.threads:
         torch.set_num_threads(a.threads)
     d = np.load(a.sample); meta = json.loads(str(d["meta"])); off = d["offsets"]
@@ -65,7 +72,7 @@ def main():
         for method in methods:
             ts = []
             for t, m, e in stars:
-                s = time.perf_counter(); run(method, t, m, e); ts.append(time.perf_counter() - s)
+                ts.append(run(method, t, m, e)[1])
             out["rows"][f"{survey}|{method}"] = {"median_ms": 1000 * float(np.median(ts)), "mean_ms": 1000 * float(np.mean(ts)),
                                                  "median_points": npts}
             print(f"{survey:<8} (median N={npts:6d})  {method:<20} median {1000 * np.median(ts):9.1f} ms   "
