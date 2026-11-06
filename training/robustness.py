@@ -126,7 +126,7 @@ def main():
     cases["seasons + nightly, P 0.3-3 d"] = [draw(seasonal(150), P=float(np.exp(rng.uniform(np.log(0.3), np.log(3)))))
                                             for _ in range(a.n)]
 
-    d = np.load(a.sample); meta = json.loads(str(d["meta"])); off = d["offsets"]
+    d = dict(np.load(a.sample)); meta = json.loads(str(d["meta"])); off = d["offsets"]   # load each array once
     for survey in ("OGLE", "ASAS-SN", "Kepler", "TESS", "VVV"):
         idx = [i for i, r in enumerate(meta) if r["survey"] == survey]
         draws = []

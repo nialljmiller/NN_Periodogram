@@ -58,7 +58,7 @@ def main():
     NIFTY = Nifty()
     if a.threads:
         torch.set_num_threads(a.threads)
-    d = np.load(a.sample); meta = json.loads(str(d["meta"])); off = d["offsets"]
+    d = dict(np.load(a.sample)); meta = json.loads(str(d["meta"])); off = d["offsets"]   # load each array once
     rng = np.random.default_rng(5)
     methods = ["nn_periodogram", "nifty-ls", "astropy LS (fast)", "LS (exact)", "PDM"]
     out = {"cpu": platform.processor() or platform.machine(), "torch_threads": torch.get_num_threads(), "rows": {}}
