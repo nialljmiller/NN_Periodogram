@@ -11,6 +11,10 @@ from .features import (channels_from_phase, fold_phase, global_features, prepare
                        robust_normalise)
 
 _MODELS = {}
+# The networks are trained on at most this many points per light curve (a fresh random
+# subset each time), so scoring a random subset of this size loses nothing they were
+# trained to use and keeps the network step to milliseconds at any length.
+MAX_POINTS = 5000
 
 
 def _days(x):
@@ -72,12 +76,16 @@ def estimate_errors(t, m):
 
 
 @torch.no_grad()
-def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24):
-    """Every point is used; batches shrink as light curves grow to bound memory."""
+def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_points=MAX_POINTS):
+    """Light curves longer than max_points are scored on a fixed random subset of that size
+    (as in training); batches shrink as light curves grow to bound memory."""
     t, m = np.asarray(t, float), np.asarray(m, float)
     e = estimate_errors(t, m) if e is None else np.asarray(e, float)
     ok = np.isfinite(t) & np.isfinite(m) & np.isfinite(e) & (e > 0)
     t, m, e = t[ok], m[ok], e[ok]
+    if max_points and len(t) > max_points:
+        keep = np.sort(np.random.default_rng(0).choice(len(t), max_points, replace=False))
+        t, m, e = t[keep], m[keep], e[keep]
     w = torch.ones(1, len(t), device=device)
     z, ze = robust_normalise(torch.tensor(m, dtype=torch.float32, device=device)[None],
                              torch.tensor(e, dtype=torch.float32, device=device)[None], w)
