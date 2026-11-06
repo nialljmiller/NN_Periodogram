@@ -32,17 +32,19 @@ scored against each catalogue's own period: **correct** within 1%, otherwise **h
 |---|---|---|---|
 | OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **92.8%** | 79.1% | 66.0% |
 | Kepler eclipsing binaries (281) | **79.7%** | 47.3% | 5.0% |
-| TESS eclipsing binaries (459) | **78.6%** | | 9.4% |
-| VVV (near-infrared, sparse; ASAS-SN periods) | | | |
+| TESS eclipsing binaries (459) | **78.6%** | 49.2% | 9.4% |
+| VVV: near-infrared, sparse (421; ASAS-SN periods) | **52.5%** | 39.7% | 37.1% |
+| ASAS-SN / VSX, strictly periodic classes (204) | **44.1%** | 36.8% | 29.4% |
 | ASAS-SN / VSX, all classes (585) | **28.9%** | 23.8% | 17.1% |
 
 Lomb-Scargle numbers are identical for astropy, nifty-ls and an exact implementation. Most
 of the gain is in harmonics: Lomb-Scargle reports half the orbital period of an eclipsing
-binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–12%
+binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–16%
 where theirs are 11–68%. Every difference from PDM is significant (paired McNemar test,
-p < 10⁻³). ASAS-SN is low for every method because many VSX classes (semi-regular,
-rotational, miscellaneous) have catalogue periods that a fold need not confirm; on strictly
-periodic classes NN_Periodogram gets 48.6% against PDM's 37.9% (validation split).
+p < 10⁻³; p = 0.03 for the 204 strictly periodic ASAS-SN stars). ASAS-SN is low for every
+method because many VSX classes (semi-regular, rotational, miscellaneous) have catalogue
+periods that a fold need not confirm, and for a third of its stars no periodogram puts the
+true period among its strongest peaks.
 
 **Robustness** (synthetic light curves with known periods; the same light curves for every
 method):
