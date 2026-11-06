@@ -1,5 +1,10 @@
 # NN_Periodogram
 
+[![PyPI](https://img.shields.io/pypi/v/nn-periodogram)](https://pypi.org/project/nn-periodogram/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24022627.svg)](https://doi.org/10.5281/zenodo.24022627)
+[![tests](https://github.com/nialljmiller/NN_Periodogram/actions/workflows/tests.yml/badge.svg)](https://github.com/nialljmiller/NN_Periodogram/actions/workflows/tests.yml)
+[![docs](https://img.shields.io/badge/docs-online-blue)](https://nialljmiller.github.io/NN_Periodogram/)
+
 **Find the periods of variable stars in any survey's light curves, and tell real periods
 from harmonics and aliases.** A fast periodogram proposes candidate periods; a neural
 network, which sees each light curve folded at P, 2P and P/2 side by side, decides which
@@ -121,7 +126,7 @@ and given rescaled errors. Everything is in `training/`.
 
 ## Citing
 
-Please cite the software (Zenodo DOI; see `CITATION.cff`) and
+Please cite the software, [doi:10.5281/zenodo.24022627](https://doi.org/10.5281/zenodo.24022627) (all versions; see `CITATION.cff`), and
 
 Miller N., Lucas P. W., Sun Y., Guo Z., Cooper W. J., Morris C., 2024, *The verification
 of periodicity with the use of recurrent neural networks*, RAS Techniques and Instruments,

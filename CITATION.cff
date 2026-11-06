@@ -6,6 +6,8 @@ authors:
     given-names: Niall J.
     email: niall.j.miller@gmail.com
 version: 1.0.0
+doi: 10.5281/zenodo.24022627
+date-released: 2026-11-06
 license: MIT
 repository-code: "https://github.com/nialljmiller/NN_Periodogram"
 url: "https://nialljmiller.com/projects/NN_Periodogram/"
