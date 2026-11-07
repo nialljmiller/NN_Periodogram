@@ -56,6 +56,9 @@ def classify(f_found, f_true, span):
 def job(args):
     import nn_periodogram as nnp
     i, kwargs = args
+    tta = kwargs.pop("_tta", 1)
+    import importlib
+    importlib.import_module("nn_periodogram.periodogram").TTA = tta
     d, meta = DATA
     off = d["offsets"]
     t, m, e = (d[k][off[i]:off[i + 1]].astype(float) for k in ("time", "mag", "err"))
@@ -80,6 +83,7 @@ def main():
     ap.add_argument("--proposers", nargs="+", default=None); ap.add_argument("--n-candidates", type=int, default=None)
     ap.add_argument("--weights"); ap.add_argument("--model", default=None)
     ap.add_argument("--procs", type=int, default=8); ap.add_argument("--surveys", nargs="+")
+    ap.add_argument("--tta", type=int, default=1)
     a = ap.parse_args()
     kwargs = {}
     if a.proposers:
@@ -90,10 +94,11 @@ def main():
         kwargs["weights"] = a.weights
     if a.model:
         kwargs["model"] = a.model
+    kwargs["_tta"] = a.tta
     meta = json.loads(str(np.load(a.sample)["meta"]))
     with Pool(a.procs, initializer=_init, initargs=(a.sample,)) as p:
         idx = [i for i, r in enumerate(meta) if not a.surveys or r["survey"] in a.surveys]
-        rows = p.map(job, [(i, kwargs) for i in idx], chunksize=4)
+        rows = p.map(job, [(i, dict(kwargs)) for i in idx], chunksize=4)
     json.dump(rows, open(a.out, "w"))
     groups = defaultdict(list)
     for r in rows:

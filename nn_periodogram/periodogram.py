@@ -15,6 +15,9 @@ _MODELS = {}
 # subset each time), so scoring a random subset of this size loses nothing they were
 # trained to use and keeps the network step to milliseconds at any length.
 MAX_POINTS = 5000
+# Test-time augmentation: average the network's logit over 1, 2 or 4 label-preserving
+# versions of each fold (as is; magnitudes flipped; time reversed; both), all seen in training.
+TTA = 1
 
 
 def _days(x):
@@ -95,11 +98,18 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
     out = np.empty(len(freqs), np.float32)
     views = getattr(model, "views", (1.0,))
     batch = max(1, batch // len(views))
+    variants = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][:max(1, TTA)]
+    batch = max(1, batch // len(variants))
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
         B = len(f)
-        x = profile_views(tt[None, :], f, z.expand(B, -1), ze.expand(B, -1), w.expand(B, -1), views, device)
-        out[s:s + B] = 1.0 - model(x, g.expand(B, -1)).float().cpu().numpy()   # P(real) -> FAP
+        logit = 0.0
+        for sign_m, sign_t in variants:
+            zz = z * sign_m
+            x = profile_views(sign_t * tt[None, :], f, zz.expand(B, -1), ze.expand(B, -1), w.expand(B, -1), views, device)
+            gg = global_features(zz, ze, w) if sign_m < 0 else g
+            logit = logit + model.logits(x, gg.expand(B, -1)).float()
+        out[s:s + B] = 1.0 - torch.sigmoid(logit / len(variants)).cpu().numpy()   # P(real) -> FAP
     return out
 
 
