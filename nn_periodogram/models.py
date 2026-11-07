@@ -137,3 +137,22 @@ class PeriodsNet(nn.Module):
 
     def forward(self, x, g):
         return torch.sigmoid(self.logits(x, g))
+
+
+class Ensemble(nn.Module):
+    """Average of several PeriodsNets' logits (same views). More accurate than any member."""
+    input_kind = "binned"
+
+    def __init__(self, members):
+        super().__init__()
+        self.members = nn.ModuleList(members)
+        views = {tuple(m.views) for m in members}
+        assert len(views) == 1, "ensemble members must share their views"
+        self.views = views.pop()
+        self.prefer_shorter = all(getattr(m, "prefer_shorter", False) for m in members)
+
+    def logits(self, x, g):
+        return torch.stack([m.logits(x, g) for m in self.members]).mean(0)
+
+    def forward(self, x, g):
+        return torch.sigmoid(self.logits(x, g))

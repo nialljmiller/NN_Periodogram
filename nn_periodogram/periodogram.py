@@ -49,7 +49,11 @@ def _freq(x):
 def _model(name, device, path=None):
     key = (name, str(device), path)
     if key not in _MODELS:
-        _MODELS[key] = hub.load(name, path=path, device=device)
+        if path and "," in str(path):           # several weight files: an ensemble
+            from .models import Ensemble
+            _MODELS[key] = Ensemble([hub.load(name, path=p, device=device) for p in str(path).split(",")]).eval()
+        else:
+            _MODELS[key] = hub.load(name, path=path, device=device)
     return _MODELS[key]
 
 
