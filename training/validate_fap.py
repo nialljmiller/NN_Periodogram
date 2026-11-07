@@ -31,7 +31,7 @@ def job(args):
 if __name__ == "__main__":
     jobs = [(500000 + 100 * b + j, C.EDGES[b], C.EDGES[b + 1], snr)
             for b in range(len(C.EDGES) - 1) for snr in (0.0, 0.5, 1.0) for j in range(60)]
-    with Pool(8, initializer=C._init, initargs=(sys.argv[1],)) as p:
+    with Pool(8, initializer=C._init, initargs=(sys.argv[1], {})) as p:
         res = p.map(job, jobs, chunksize=4)
     for snr in (0.0, 0.5, 1.0):
         print(f"\n== {'pure noise' if snr == 0 else f'signal, rms = {snr} x noise'}")

@@ -83,7 +83,7 @@ def estimate_errors(t, m):
 
 
 @torch.no_grad()
-def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_points=MAX_POINTS):
+def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_points=MAX_POINTS, tta=None):
     """Light curves longer than max_points are scored on a fixed random subset of that size
     (as in training); batches shrink as light curves grow to bound memory."""
     t, m = np.asarray(t, float), np.asarray(m, float)
@@ -102,7 +102,9 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
     out = np.empty(len(freqs), np.float32)
     views = getattr(model, "views", (1.0,))
     batch = max(1, batch // len(views))
-    variants = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][:max(1, TTA)]
+    if tta is None:                                  # the model's own default, else the package's
+        tta = getattr(model, "tta", None) or TTA
+    variants = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][:max(1, tta)]
     batch = max(1, batch // len(variants))
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
@@ -117,13 +119,13 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
     return out
 
 
-def _score(t, m, freqs, model, device, batch, exact=False, err=None):
+def _score(t, m, freqs, model, device, batch, exact=False, err=None, tta=None):
     if getattr(model, "input_kind", "legacy") == "binned":
-        return _score_binned(t, m, err, freqs, model, device)
+        return _score_binned(t, m, err, freqs, model, device, tta=tta)
     return _score_legacy(t, m, freqs, model, device, batch, exact)
 
 
-def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
+def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False, tta=None):
     """Neural-network false-alarm probability of one or more trial periods.
 
     Parameters
@@ -146,6 +148,10 @@ def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024,
         Path to a local weights file, bypassing the download.
     exact : bool
         Legacy model only: compute features in float64 on the CPU, matching the 2022 code to ~1e-6.
+    tta : int, optional
+        Test-time augmentation: average the network over 1, 2 or 4 label-preserving versions
+        of each fold (as is, magnitudes flipped, time reversed, both). More is slightly more
+        accurate and proportionally slower. Default: the package setting ``TTA``.
 
     Returns
     -------
@@ -155,7 +161,7 @@ def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024,
     device = torch.device(device) if device else hub.default_device()
     t, m, err = _days(time), _plain(mag), _plain(err)
     periods = np.atleast_1d(_days(period))
-    out = _score(t, m, 1.0 / periods, _model(model, device, weights), device, batch, exact, err)
+    out = _score(t, m, 1.0 / periods, _model(model, device, weights), device, batch, exact, err, tta)
     return out if np.ndim(period) else float(out[0])
 
 
@@ -184,7 +190,7 @@ class Periodogram:
 
 def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_peaks=5, refine=20,
                 prefer_shorter=None, method=None, n_candidates=40, proposers=("ls", "mhls"), calibrated=True,
-                model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False):
+                model=hub.DEFAULT, device=None, batch=1024, weights=None, exact=False, tta=None):
     """Find the period of a light curve.
 
     Parameters
@@ -220,7 +226,7 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
         outlier-ridden noise) whose best fold scores as well. Searching hundreds of periods
         makes some fold look good by chance, so the best fold's own FAP
         (``best_fap_fold``) is far too optimistic for detection. Default True.
-    model, device, batch, weights, exact
+    model, device, batch, weights, exact, tta
         As for :func:`fap`.
 
     Returns
@@ -239,14 +245,14 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
         method = "full" if getattr(net, "input_kind", "legacy") == "legacy" else "hybrid"
     if method == "hybrid":
         res = _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-                      proposers)
+                      proposers, tta)
         return _calibrate(res, model, np.isfinite(np.asarray(mag, float)).sum(), calibrated)
     t, m = np.asarray(time, float), np.asarray(mag, float)
     span = np.ptp(np.asarray(time, float)[np.isfinite(time)])
     df = 1.0 / (oversample * span)
     fmin = fmin or 2.0 / span
     freqs = np.arange(fmin, fmax, df)
-    f_ap = _score(t, m, freqs, net, device, batch, exact, err)
+    f_ap = _score(t, m, freqs, net, device, batch, exact, err, tta)
 
     # local minima, best first, separated by at least 5 grid steps
     order = np.argsort(f_ap)
@@ -259,7 +265,7 @@ def periodogram(time, mag, err=None, fmin=None, fmax=10.0, oversample=3.0, n_pea
     peaks = []
     for i in picked:
         fine = np.linspace(freqs[i] - df, freqs[i] + df, 2 * refine + 1)
-        ff = _score(t, m, fine, net, device, batch, exact, err)
+        ff = _score(t, m, fine, net, device, batch, exact, err, tta)
         k = int(np.argmin(ff))
         peaks.append((1.0 / fine[k], float(ff[k])))
     peaks.sort(key=lambda p: p[1])
@@ -324,7 +330,7 @@ def _grid_peaks(power, n, f0, df, sep=5):
 
 
 def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-            proposers=("ls", "mhls")):
+            proposers=("ls", "mhls"), tta=None):
     """Fast classical periodograms propose, the network decides.
 
     Proposers run over the whole frequency grid in O(N + M log M) ("ls": generalised
@@ -354,7 +360,7 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
         cands += _grid_peaks(power, n_candidates, fmin, df)
     cands = np.array([c * r for c in cands for r in HARMONICS])
     cands = np.unique(np.round(cands[(cands >= fmin) & (cands <= fmax)], 12))
-    f_ap = _score(t, m, cands, net, device, batch, False, e)
+    f_ap = _score(t, m, cands, net, device, batch, False, e, tta)
     order = np.argsort(f_ap)
     peaks = []                                    # distinct periods (>= 1% apart), best first
     for i in order:
@@ -394,7 +400,7 @@ class PeriodCheck:
         return f"PeriodCheck({self.period:.6f} d -> {self.relation} = {self.best_period:.6f} d)\n{rows}"
 
 
-def check_period(time, mag, period, err=None, model=hub.DEFAULT, device=None, weights=None):
+def check_period(time, mag, period, err=None, model=hub.DEFAULT, device=None, weights=None, tta=None):
     """Check a known period: is it right, a harmonic, or a sampling alias?
 
     Scores ``period`` (from any method or catalogue) against 2P, P/2, 3P, P/3, 3P/2,
@@ -426,7 +432,7 @@ def check_period(time, mag, period, err=None, model=hub.DEFAULT, device=None, we
         cands.append((f"alias {'+' if sign > 0 else '-'}1/yr", abs(f0 + sign / YEAR)))
     cands = [(name, f) for name, f in cands if f > 0]
     t, m = np.asarray(time, float), np.asarray(mag, float)
-    faps = _score(t, m, np.array([f for _, f in cands]), net, device, 1024, False, err)
+    faps = _score(t, m, np.array([f for _, f in cands]), net, device, 1024, False, err, tta)
     rows = sorted(((name, 1.0 / f, float(a)) for (name, f), a in zip(cands, faps)), key=lambda r: r[2])
     best = rows[0]
     return PeriodCheck(period, best[1], best[2], best[0], rows)

@@ -28,10 +28,14 @@ EDGES = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]     # log10(number of points) b
 CADENCES = None
 
 
-def _init(sample):
+OPTS = {}
+
+
+def _init(sample, opts):
     global CADENCES
     import torch
     torch.set_num_threads(1)
+    OPTS.update(opts)
     d = dict(np.load(sample)); off = d["offsets"]
     CADENCES = [(d["time"][off[i]:off[i + 1]], d["err"][off[i]:off[i + 1]]) for i in range(len(off) - 1)]
 
@@ -56,7 +60,8 @@ def null_search(args):
     elif kind == "outliers":
         o = rng.random(len(t)) < 0.03
         m[o] += rng.choice([-1, 1], o.sum()) * rng.uniform(5, 15, o.sum()) * e[o]
-    res = nnp.periodogram(t, 15 + m, e, device="cpu", model=model, calibrated=False)
+    res = nnp.periodogram(t, 15 + m, e, model=model, calibrated=False, device=OPTS.get("device", "cpu"),
+                          weights=OPTS.get("weights"), tta=OPTS.get("tta"))
     return len(t), float(res.best_fap)
 
 
@@ -64,9 +69,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", required=True); ap.add_argument("--model", default="periods-v4")
     ap.add_argument("--per-bin", type=int, default=1500); ap.add_argument("--procs", type=int, default=8)
+    ap.add_argument("--device", default="cpu"); ap.add_argument("--tta", type=int); ap.add_argument("--weights")
     a = ap.parse_args()
     jobs = [(1000 * b + j, EDGES[b], EDGES[b + 1], a.model) for b in range(len(EDGES) - 1) for j in range(a.per_bin)]
-    with Pool(a.procs, initializer=_init, initargs=(a.sample,)) as pool:
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")                     # CUDA cannot be shared by forked workers
+    with ctx.Pool(a.procs, initializer=_init, initargs=(a.sample, {"device": a.device, "tta": a.tta, "weights": a.weights})) as pool:
         res = pool.map(null_search, jobs, chunksize=8)
     bins = []
     for b in range(len(EDGES) - 1):

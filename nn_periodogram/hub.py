@@ -52,11 +52,14 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def fetch(name=DEFAULT, path=None):
-    """Local path to a model's weights, downloading and verifying them if needed."""
+def fetch(name=DEFAULT, path=None, member=None):
+    """Local path to a model's weights, downloading and verifying them if needed.
+    Ensembles list several files; `member` picks one."""
     info = MODELS[name]
     if path is not None:
         return Path(path)
+    if member is not None:
+        info = {**info, "file": info["files"][member], "sha256": info["sha256s"][member]}
     target = cache_dir() / info["file"]
     if target.exists() and (info["sha256"] is None or _sha256(target) == info["sha256"]):
         return target
@@ -80,9 +83,22 @@ def fetch(name=DEFAULT, path=None):
 
 
 def load(name=DEFAULT, path=None, device=None):
-    """Build a model and load its weights."""
+    """Build a model and load its weights (several files for an ensemble)."""
     info = MODELS[name]
-    state = torch.load(fetch(name, path), map_location="cpu", weights_only=True)
+    if path is None and "files" in info:
+        from .models import Ensemble
+        members = [_load_one(info, fetch(name, member=k)) for k in range(len(info["files"]))]
+        model = Ensemble(members)
+        model.prefer_shorter = info.get("prefer_shorter", False)
+        model.tta = info.get("tta", 1)
+        return model.eval().to(device or default_device())
+    model = _load_one(info, fetch(name, path))
+    model.tta = info.get("tta", 1)
+    return model.eval().to(device or default_device())
+
+
+def _load_one(info, path):
+    state = torch.load(path, map_location="cpu", weights_only=True)
     config = {}
     if "state_dict" in state:            # release files: {"state_dict": ..., "config": {...}}
         state, config = state["state_dict"], state.get("config", {})
@@ -97,7 +113,7 @@ def load(name=DEFAULT, path=None, device=None):
     model.load_state_dict(state)
     # Search defaults that belong to the weights (e.g. whether ties go to the shorter period)
     model.prefer_shorter = config.get("prefer_shorter", info.get("prefer_shorter", True))
-    return model.eval().to(device or default_device())
+    return model.eval()
 
 
 def package(state_dict_path, out_path, **config):
