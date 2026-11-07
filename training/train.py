@@ -168,6 +168,10 @@ def augment(t, m, e, rng):
             t, m, e = t[keep], m[keep], e[keep]
     if rng.uniform() < 0.3:
         e = e * math.exp(rng.uniform(math.log(0.5), math.log(2)))
+    if QUASI and rng.uniform() < 0.15 and np.ptp(t) > 400:              # season-to-season zero points
+        season = np.floor((t - t.min()) / 365.25).astype(int)
+        sig = 1.4826 * np.median(np.abs(m - np.median(m))) or float(np.median(e))
+        m = m + rng.normal(0, 0.3 * sig, season.max() + 1)[season]
     return t, m, e
 
 
@@ -188,13 +192,34 @@ def synthetic_noise(t, e, rng):
     return m
 
 
+QUASI = 0.0        # set from --quasi: fraction of injections that are quasi-periodic
+
+
 def inject(t, m, rng):
-    """Add a known periodic signal; returns new mags and its frequency."""
+    """Add a known periodic signal; returns new mags and its frequency.
+
+    With probability QUASI the signal is quasi-periodic, like spotted rotators,
+    semi-regulars and long-period variables: the phase wanders (random walk with a
+    coherence time of 5-100 cycles), the amplitude is modulated over seasons, and
+    the period may drift by up to 1%. The label stays the mean frequency."""
     span = np.ptp(t)
     f_true = math.exp(rng.uniform(math.log(3 / span), math.log(F_MAX)))
     sig = 1.4826 * np.median(np.abs(m - np.median(m))) or 0.01
     amp = sig * math.exp(rng.uniform(math.log(0.5), math.log(20)))
-    return m + amp * signal(rng.choice(["sine", "rr", "eb", "fourier"]), (t * f_true) % 1, rng), f_true
+    phase = t * f_true
+    envelope = 1.0
+    if rng.uniform() < QUASI:
+        order = np.argsort(t); ts = t[order]
+        n_coh = math.exp(rng.uniform(math.log(5), math.log(100)))          # coherence time in cycles
+        dphi = np.diff(ts, prepend=ts[0]) * f_true / n_coh                 # cycles elapsed / coherence
+        walk = np.cumsum(rng.normal(0, 1, len(ts)) * np.sqrt(np.maximum(dphi, 0))) * 0.25
+        drift = rng.uniform(-0.01, 0.01) * f_true * (ts - ts.mean()) ** 2 / (2 * span)
+        wander = np.empty_like(walk); wander[order] = walk + drift
+        phase = phase + wander
+        t_mod = math.exp(rng.uniform(math.log(span / 10), math.log(2 * span)))
+        envelope = 1 + rng.uniform(0, 0.6) * np.sin(2 * np.pi * t / t_mod + rng.uniform(0, 2 * np.pi))
+    shape = rng.choice(["sine", "rr", "eb", "fourier"]) if not np.ndim(envelope) else rng.choice(["sine", "fourier"])
+    return m + amp * envelope * signal(shape, phase % 1, rng), f_true
 
 
 def batch_arrays(reals, quiet, B, rng):
@@ -301,6 +326,8 @@ def main():
     ap.add_argument("--steps", type=int, default=60000); ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=2e-3); ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--workers", type=int, default=6, help="processes building batches")
+    ap.add_argument("--quasi", type=float, default=0.0, help="fraction of injections that are quasi-periodic")
+    ap.add_argument("--width", type=int, default=96); ap.add_argument("--blocks", type=int, default=8)
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -314,10 +341,11 @@ def main():
     print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
           "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
-    global VIEWS
+    global VIEWS, QUASI
     VIEWS = tuple(a.views)
-    json.dump({"views": VIEWS}, open(out / "config.json", "w"))
-    model = PeriodsNet(views=VIEWS).to(device)
+    QUASI = a.quasi
+    json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi}, open(out / "config.json", "w"))
+    model = PeriodsNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.steps)
     loss_fn = torch.nn.BCEWithLogitsLoss()

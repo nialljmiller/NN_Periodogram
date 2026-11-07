@@ -86,10 +86,12 @@ def load(name=DEFAULT, path=None, device=None):
     config = {}
     if "state_dict" in state:            # release files: {"state_dict": ..., "config": {...}}
         state, config = state["state_dict"], state.get("config", {})
-    if "stem.0.weight" in state:         # PeriodsNet: the views are fixed by the weights' shape
-        n_views = state["stem.0.weight"].shape[1] // 16
-        views = tuple(config.get("views", (1.0, 0.5, 2.0)[:n_views]))
-        model = PeriodsNet(views=views)
+    if "stem.0.weight" in state:         # PeriodsNet: views, width and depth are fixed by the weights
+        width, n_in = state["stem.0.weight"].shape[:2]
+        views = tuple(config.get("views", (1.0, 0.5, 2.0)[:n_in // 16]))
+        n_blocks = len({k.split(".")[1] for k in state if k.startswith("blocks.")})
+        dilations = tuple(config.get("dilations", ((1, 2, 4, 8) * 4)[:n_blocks]))
+        model = PeriodsNet(views=views, width=int(width), dilations=dilations)
     else:
         model = info["build"]()
     model.load_state_dict(state)

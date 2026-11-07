@@ -33,6 +33,10 @@ def run(method, t, m, e):
     s = time.perf_counter()
     if method == "nn_periodogram":
         return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu").best_period, time.perf_counter() - s
+    if method == "nn_periodogram (LS only)":
+        return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu", proposers=("ls",)).best_period, time.perf_counter() - s
+    if method == "legacy-2022":
+        return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu", model="legacy-2022").best_period, time.perf_counter() - s
     if method == "nifty-ls":
         p, inside = NIFTY.power(t, m, e, f0, df, nf)
         return 1 / (f0 + df * int(np.argmax(p))), inside
@@ -52,6 +56,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--per-survey", type=int, default=50); ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--methods", nargs="+", default=["nn_periodogram", "nifty-ls", "astropy LS (fast)", "LS (exact)", "PDM"])
     a = ap.parse_args()
     global NIFTY
     from nifty_worker import Nifty
@@ -60,7 +65,7 @@ def main():
         torch.set_num_threads(a.threads)
     d = dict(np.load(a.sample)); meta = json.loads(str(d["meta"])); off = d["offsets"]   # load each array once
     rng = np.random.default_rng(5)
-    methods = ["nn_periodogram", "nifty-ls", "astropy LS (fast)", "LS (exact)", "PDM"]
+    methods = a.methods
     out = {"cpu": platform.processor() or platform.machine(), "torch_threads": torch.get_num_threads(), "rows": {}}
     t0 = d["time"][off[0]:off[1]]
     run("nn_periodogram", t0, d["mag"][off[0]:off[1]].astype(float), d["err"][off[0]:off[1]].astype(float))  # warm up
