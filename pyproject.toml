@@ -20,6 +20,9 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.22", "torch>=2.0"]
 
+[project.scripts]
+nn-periodogram = "nn_periodogram.cli:main"
+
 [project.optional-dependencies]
 plot = ["matplotlib"]
 convert = ["h5py"]

@@ -61,3 +61,17 @@ given periods.
   quantity when the period was fixed in advance, which is what `fap()` returns.
 
 Both are near 0 for "this looks like a real period" and near 1 for "it does not".
+
+## From the command line
+
+```bash
+nn-periodogram star.csv                      # one file
+nn-periodogram lcs/*.csv --out periods.csv   # many files -> one table
+nn-periodogram star.fits --check 0.5077      # is this period right, or 2P, P/2, an alias?
+nn-periodogram star.dat --plot fold.png      # save the fold at the best period
+```
+
+Columns are recognised by name (`time`/`mjd`/`jd`/`hjd`/`bjd`, `mag`/`flux`,
+`err`/`magerr`/`flux_err`, ...), or taken in order (time, value, error) when the file has
+no header; `--time-col`, `--mag-col` and `--err-col` override either way. CSV,
+whitespace-separated text and FITS tables are read.

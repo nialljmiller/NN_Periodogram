@@ -163,7 +163,7 @@ def fap(time, mag, period, err=None, model=hub.DEFAULT, device=None, batch=1024,
 class Periodogram:
     freq: np.ndarray
     fap: np.ndarray
-    peaks: list = field(default_factory=list)      # [(period, fap)] best first, after refinement
+    peaks: list = field(default_factory=list)      # [(period, fold FAP)] distinct periods, best first
     best_period: float = np.nan
     best_fap: float = np.nan        # FAP of the search: corrected for the many periods tried
     note: str = ""
@@ -356,7 +356,12 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     cands = np.unique(np.round(cands[(cands >= fmin) & (cands <= fmax)], 12))
     f_ap = _score(t, m, cands, net, device, batch, False, e)
     order = np.argsort(f_ap)
-    peaks = [(1.0 / cands[i], float(f_ap[i])) for i in order[:10]]
+    peaks = []                                    # distinct periods (>= 1% apart), best first
+    for i in order:
+        if all(abs(cands[i] * q[0] - 1) > 0.01 for q in peaks):
+            peaks.append((1.0 / cands[i], float(f_ap[i])))
+        if len(peaks) == 10:
+            break
     best, best_f = peaks[0]
     note = ""
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
