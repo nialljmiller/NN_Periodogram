@@ -33,6 +33,8 @@ def run(method, t, m, e):
     s = time.perf_counter()
     if method == "nn_periodogram":
         return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu").best_period, time.perf_counter() - s
+    if method == "nn_periodogram (tta 4)":
+        return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu", tta=4).best_period, time.perf_counter() - s
     if method == "nn_periodogram (LS only)":
         return nnp.periodogram(t, m, e, fmax=FMAX, device="cpu", proposers=("ls",)).best_period, time.perf_counter() - s
     if method == "legacy-2022":

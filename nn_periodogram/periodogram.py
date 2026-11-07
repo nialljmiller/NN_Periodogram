@@ -109,13 +109,18 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
         B = len(f)
-        logit = 0.0
+        x = profile_views(tt[None, :], f, z.expand(B, -1), ze.expand(B, -1), w.expand(B, -1), views, device)
+        # The augmented folds come from this one: flipping the magnitudes negates the mean
+        # channels (every 4th), reversing time mirrors the phase bins. The global features
+        # depend on z^2 only, so they are unchanged.
+        sign = torch.ones(x.shape[1], 1, device=x.device, dtype=x.dtype)
+        sign[0::4] = -1.0
+        xs = []
         for sign_m, sign_t in variants:
-            zz = z * sign_m
-            x = profile_views(sign_t * tt[None, :], f, zz.expand(B, -1), ze.expand(B, -1), w.expand(B, -1), views, device)
-            gg = global_features(zz, ze, w) if sign_m < 0 else g
-            logit = logit + model.logits(x, gg.expand(B, -1)).float()
-        out[s:s + B] = 1.0 - torch.sigmoid(logit / len(variants)).cpu().numpy()   # P(real) -> FAP
+            xv = x * sign if sign_m < 0 else x
+            xs.append(xv.flip(-1) if sign_t < 0 else xv)
+        logit = model.logits(torch.cat(xs), g.expand(B * len(xs), -1)).float().view(len(xs), B).mean(0)
+        out[s:s + B] = 1.0 - torch.sigmoid(logit).cpu().numpy()   # P(real) -> FAP
     return out
 
 
