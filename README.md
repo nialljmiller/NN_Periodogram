@@ -25,6 +25,8 @@ nnp.fap(time, mag, [0.6254, 0.3127], err)  # false-alarm probability of given pe
 
 ```bash
 pip install nn-periodogram
+nn-periodogram star.csv                     # or from the command line (CSV, text, FITS)
+nn-periodogram lcs/*.csv --out periods.csv  # many light curves -> one table
 ```
 
 ## How well it works
@@ -35,29 +37,29 @@ scored against each catalogue's own period: **correct** within 1%, otherwise **h
 
 | Survey (stars) | **NN_Periodogram** | PDM | Lomb-Scargle |
 |---|---|---|---|
-| OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **92.8%** | 79.1% | 66.0% |
-| Kepler eclipsing binaries (281) | **79.7%** | 47.3% | 5.0% |
-| TESS eclipsing binaries (459) | **78.6%** | 49.2% | 9.4% |
-| VVV: near-infrared, sparse (421; ASAS-SN periods) | **52.5%** | 39.7% | 37.1% |
-| ASAS-SN / VSX, strictly periodic classes (204) | **44.1%** | 36.8% | 29.4% |
-| ASAS-SN / VSX, all classes (585) | **28.9%** | 23.8% | 17.1% |
+| OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **93.9%** | 79.1% | 66.0% |
+| Kepler eclipsing binaries (281) | **79.4%** | 47.3% | 5.0% |
+| TESS eclipsing binaries (459) | **78.9%** | 49.2% | 9.4% |
+| VVV: near-infrared, sparse (421; ASAS-SN periods) | **53.0%** | 39.7% | 37.1% |
+| ASAS-SN / VSX, strictly periodic classes (204) | **44.6%** | 36.8% | 29.4% |
+| ASAS-SN / VSX, all classes (585) | **29.4%** | 23.8% | 17.1% |
 
 Lomb-Scargle numbers are identical for astropy, nifty-ls and an exact implementation. Most
 of the gain is in harmonics: Lomb-Scargle reports half the orbital period of an eclipsing
-binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–16%
+binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–15%
 where theirs are 11–68%. Every difference from PDM is significant (paired McNemar test,
-p < 10⁻³; p = 0.03 for the 204 strictly periodic ASAS-SN stars). ASAS-SN is low for every
+p < 10⁻³; p = 0.02 for the 204 strictly periodic ASAS-SN stars). ASAS-SN is low for every
 method because many VSX classes (semi-regular, rotational, miscellaneous) have catalogue
 periods that a fold need not confirm, and for a third of its stars no periodogram puts the
 true period among its strongest peaks.
 
 **Against the 2022 network.** On the same 100 test stars per survey, the original NN FAP
 network (`legacy-2022`, exhaustive search) recovers 52% (OGLE), 22% (Kepler), 10% (TESS),
-36% (VVV) and 16% (ASAS-SN) of periods, where NN_Periodogram recovers 91, 82, 81, 50 and 28%;
-it also needs 6–14 s per star on a GPU, about 200× longer.
+36% (VVV) and 16% (ASAS-SN) of periods, where NN_Periodogram recovers 93, 81, 80, 53 and 29%;
+it also needs 6–15 s per star on a GPU, 100–200× longer.
 
 **Robustness** (synthetic light curves with known periods; the same light curves for every
-method):
+method; measured with version 1.0):
 
 | Case | NN_Periodogram | Lomb-Scargle | PDM |
 |---|---|---|---|
@@ -71,21 +73,22 @@ Below about 50 points at signal = noise, no method finds periods reliably.
 
 **False-alarm probability.** `best_fap` is the probability that a light curve with *no*
 periodic signal, of the same size, would produce as good a best fold somewhere in the
-search. It is calibrated on 10,500 searches of pure noise (white, red and outlier-ridden,
+search. It is calibrated (for the default `tta=4`) on 10,500 searches of pure noise (white, red and outlier-ridden,
 on real cadences from all five surveys), because the best of hundreds of folds always looks
 good by chance. On fresh noise, `best_fap < 0.01` flags 0.2% of light curves and
-`best_fap < 0.1` about 6%. The network's FAP of the best fold alone is `best_fap_fold`.
+`best_fap < 0.1` about 5%. The network's FAP of the best fold alone is `best_fap_fold`.
 
 **Speed** (median per star; same stars and grid; Apple M-series CPU and an RTX 3070 Ti):
 
 | Light curves | NN_Periodogram CPU | NN_Periodogram GPU | PDM (CPU) | exact LS (CPU) | astropy LS | nifty-ls |
 |---|---|---|---|---|---|---|
-| ~400 points (OGLE, ASAS-SN, VVV) | 0.24–0.29 s | ~0.05 s | 0.09–0.11 s | 0.04–0.08 s | 0.05–0.09 s | 0.004 s |
-| ~65,000 points (Kepler, TESS) | 0.36 s | ~0.07 s | 9.9–17.7 s | 7.2–8.5 s | 0.08–0.12 s | 0.007 s |
+| ~400 points (OGLE, ASAS-SN, VVV) | 0.54–0.58 s | ~0.07 s | 0.09–0.11 s | 0.04–0.08 s | 0.05–0.09 s | 0.004 s |
+| ~65,000 points (Kepler, TESS) | 0.69–0.72 s | ~0.08 s | 9.9–17.7 s | 7.2–8.5 s | 0.08–0.12 s | 0.007 s |
 
 A Lomb-Scargle periodogram is the first step of NN_Periodogram's search, so it cannot be
-faster than the fastest LS; it costs a fraction of a second per star and does not grow
-with the number of points.
+faster than the fastest LS; it costs under a second per star and barely grows with the
+number of points. `tta=1` or `proposers=("ls",)` (each about 2× faster on a CPU) trade a
+fraction of a point of accuracy for speed; see the full table on the project page.
 
 ## Ways to use it
 
@@ -99,6 +102,13 @@ with the number of points.
   method. Compares P with 2P, P/2, 3P, P/3, 3P/2, 2P/3 and the daily and yearly sampling
   aliases and says which one the network prefers.
 * **`fap(time, mag, period, err)`**: the network's FAP for periods chosen in advance.
+* **`nn-periodogram FILES`** on the command line: the same search for one or many files
+  (CSV, whitespace text or FITS; columns found by name or position), with `--check P`,
+  `--out table.csv` and `--plot fold.png`.
+
+Each candidate fold is scored four ways (as is, magnitudes flipped, time reversed, both)
+and the network's outputs averaged (`tta=4`, the default since 1.1): a little more
+accurate on every survey. `tta=1` is about 2.5x faster on a CPU.
 
 Times are days (astropy `Time` and `Quantity` inputs are converted); magnitudes or fluxes;
 errors optional (estimated from point-to-point scatter if absent). Choose the hardware with
