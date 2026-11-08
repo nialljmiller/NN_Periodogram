@@ -70,6 +70,7 @@ def main():
     ap.add_argument("--sample", required=True); ap.add_argument("--model", default="periods-v4")
     ap.add_argument("--per-bin", type=int, default=1500); ap.add_argument("--procs", type=int, default=8)
     ap.add_argument("--device", default="cpu"); ap.add_argument("--tta", type=int); ap.add_argument("--weights")
+    ap.add_argument("--name", help="calibration file name (default: the model name)")
     a = ap.parse_args()
     jobs = [(1000 * b + j, EDGES[b], EDGES[b + 1], a.model) for b in range(len(EDGES) - 1) for j in range(a.per_bin)]
     import multiprocessing as mp
@@ -88,9 +89,9 @@ def main():
                      "tail": {"start": float(top[-1]), "frac": len(top) / len(s), "rate": float(rate)}})
         print(f"log10 N {EDGES[b]:.1f}-{EDGES[b + 1]:.1f}: {sel.sum():5d} noise searches; best fold FAP median "
               f"{10 ** -np.median(s):.3g}, 1% quantile {10 ** -np.quantile(s, 0.99):.3g}", flush=True)
-    out = ROOT / "nn_periodogram" / "data" / f"calibration_{a.model}.json"
+    out = ROOT / "nn_periodogram" / "data" / f"calibration_{a.name or a.model}.json"
     out.parent.mkdir(exist_ok=True)
-    json.dump({"model": a.model, "bins": bins}, open(out, "w"))
+    json.dump({"model": a.name or a.model, "tta": a.tta, "bins": bins}, open(out, "w"))
     print("wrote", out)
 
 
