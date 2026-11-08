@@ -7,3 +7,6 @@ __pycache__/
 /runs/
 /data/
 /docs/_build/
+/dist/
+/build/
+*.egg-info/
