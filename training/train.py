@@ -143,6 +143,7 @@ HARMONICS = (2.0, 0.5, 3.0, 1 / 3, 2 / 3, 1.5)
 
 
 HARD_EB = 0.0      # set from --hard-eb: share of injections that are binaries with near-equal minima
+HARD_NEG = 0.6     # set from --hard-neg: share of a binary's negatives at its own P/2 or 2P
 EB_SHAPES = ("eb", "ew", "eb_equal")
 
 
@@ -154,7 +155,7 @@ def negative_freq(f_true, span, rng, harmonics=False, binary=False):
     true frequency, so the model learns P from 2P and P/2. Otherwise folds near
     any small-integer ratio are kept out of the negatives.
     """
-    if HARD_EB and binary and harmonics and np.isfinite(f_true) and rng.uniform() < 0.6:
+    if HARD_EB and binary and harmonics and np.isfinite(f_true) and rng.uniform() < HARD_NEG:
         # binaries: the fold at P/2 (eclipses stacked) and at 2P are the hard cases
         return f_true * (2.0 if rng.uniform() < 0.6 else 0.5) + rng.uniform(-0.05, 0.05) / span
     if harmonics and np.isfinite(f_true) and rng.uniform() < 0.25:
@@ -362,6 +363,7 @@ def main():
     ap.add_argument("--width", type=int, default=96); ap.add_argument("--blocks", type=int, default=8)
     ap.add_argument("--hard-eb", type=float, default=0.0, help="share of injections that are near-equal-minima binaries")
     ap.add_argument("--init", help="start from these weights (fine-tuning)")
+    ap.add_argument("--hard-neg", type=float, default=0.6, help="share of a binary's negatives at its P/2 or 2P")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -375,10 +377,11 @@ def main():
     print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
           "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
-    global VIEWS, QUASI, HARD_EB
+    global VIEWS, QUASI, HARD_EB, HARD_NEG
     VIEWS = tuple(a.views)
     QUASI = a.quasi
     HARD_EB = a.hard_eb
+    HARD_NEG = a.hard_neg
     json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi, "hard_eb": a.hard_eb,
                "init": a.init}, open(out / "config.json", "w"))
     model = PeriodsNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
