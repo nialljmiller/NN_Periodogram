@@ -71,6 +71,10 @@ class Shard:
             self.t.append(d["time"][a:b]); self.m.append(d["mag"][a:b]); self.e.append(d["err"][a:b])
             self.period.append(periods[i])
         self.period = np.array(self.period)
+        eb_classes = {"E", "EA", "EB", "EW", "ELL", "ECL", "ESD", "ED", "EC", "KEPLER_EB", "TESS_EB"}
+        is_eb_shard = any(k in Path(path).name for k in ("_ecl", "_eb", "_dpv"))
+        self.binary = np.array([is_eb_shard or str(meta[i].get("cls", "")).upper().rstrip(":") in eb_classes
+                                for i in keep], bool)
 
     def __len__(self):
         return len(self.t)
@@ -117,6 +121,18 @@ def signal(shape, phase, rng):
         x = (phase - rng.uniform()) % 1
         dist1 = np.minimum(x, 1 - x); dist2 = np.abs(x - 0.5)
         return np.exp(-0.5 * (dist1 / w1) ** 2) + d2 * np.exp(-0.5 * (dist2 / w2) ** 2) - 0.5
+    if shape == "ew":                                   # contact (W UMa) / ellipsoidal binary
+        x = (phase - rng.uniform()) % 1
+        delta = rng.uniform(0, 0.15)                    # primary vs secondary depth difference
+        oconnell = rng.uniform(-0.05, 0.05)             # unequal maxima
+        y = 0.5 * (1 - np.cos(4 * np.pi * x)) + delta * 0.5 * (1 - np.cos(2 * np.pi * x)) \
+            + oconnell * np.sin(2 * np.pi * x)
+        return y - y.mean()
+    if shape == "eb_equal":                             # detached, near-equal eclipses
+        w = rng.uniform(0.02, 0.08); d2 = rng.uniform(0.75, 1.0)
+        x = (phase - rng.uniform()) % 1
+        dist1 = np.minimum(x, 1 - x); dist2 = np.abs(x - 0.5)
+        return np.exp(-0.5 * (dist1 / w) ** 2) + d2 * np.exp(-0.5 * (dist2 / (w * rng.uniform(0.8, 1.25))) ** 2) - 0.5
     k = np.arange(1, 5)                                 # random Fourier series
     a = rng.normal(0, 1, 4) / k; p = rng.uniform(0, 2 * np.pi, 4)
     y = (a[None] * np.sin(2 * np.pi * k[None] * phase[:, None] + p[None])).sum(1)
@@ -126,7 +142,11 @@ def signal(shape, phase, rng):
 HARMONICS = (2.0, 0.5, 3.0, 1 / 3, 2 / 3, 1.5)
 
 
-def negative_freq(f_true, span, rng, harmonics=False):
+HARD_EB = 0.0      # set from --hard-eb: share of injections that are binaries with near-equal minima
+EB_SHAPES = ("eb", "ew", "eb_equal")
+
+
+def negative_freq(f_true, span, rng, harmonics=False, binary=False):
     """A wrong frequency for a star whose true frequency is f_true (nan for none).
 
     With harmonics=True (only where the truth is exact: injections and the
@@ -134,6 +154,9 @@ def negative_freq(f_true, span, rng, harmonics=False):
     true frequency, so the model learns P from 2P and P/2. Otherwise folds near
     any small-integer ratio are kept out of the negatives.
     """
+    if HARD_EB and binary and harmonics and np.isfinite(f_true) and rng.uniform() < 0.6:
+        # binaries: the fold at P/2 (eclipses stacked) and at 2P are the hard cases
+        return f_true * (2.0 if rng.uniform() < 0.6 else 0.5) + rng.uniform(-0.05, 0.05) / span
     if harmonics and np.isfinite(f_true) and rng.uniform() < 0.25:
         return f_true * HARMONICS[rng.integers(len(HARMONICS))] + rng.uniform(-0.05, 0.05) / span
     for _ in range(100):
@@ -218,8 +241,17 @@ def inject(t, m, rng):
         phase = phase + wander
         t_mod = math.exp(rng.uniform(math.log(span / 10), math.log(2 * span)))
         envelope = 1 + rng.uniform(0, 0.6) * np.sin(2 * np.pi * t / t_mod + rng.uniform(0, 2 * np.pi))
-    shape = rng.choice(["sine", "rr", "eb", "fourier"]) if not np.ndim(envelope) else rng.choice(["sine", "fourier"])
+    if np.ndim(envelope):
+        shape = rng.choice(["sine", "fourier"])
+    elif HARD_EB and rng.uniform() < HARD_EB:
+        shape = rng.choice(["ew", "eb_equal"])
+    else:
+        shape = rng.choice(["sine", "rr", "eb", "fourier"])
+    INJECTED[0] = shape
     return m + amp * envelope * signal(shape, phase % 1, rng), f_true
+
+
+INJECTED = [None]   # shape of the last injection (read by batch_arrays)
 
 
 def batch_arrays(reals, quiet, B, rng):
@@ -237,16 +269,16 @@ def batch_arrays(reals, quiet, B, rng):
         if src < 0.35:
             real = reals[rng.integers(len(reals))]
             i = rng.integers(len(real)); t, m, e = real.t[i], real.m[i], real.e[i]; f_true = 1 / real.period[i]
-            exact = real.trusted
+            exact = real.trusted; binary = bool(real.binary[i])
         elif src < 0.65:
             i = rng.integers(len(quiet)); t, e = quiet.t[i], quiet.e[i]
-            m, f_true = inject(t, quiet.m[i].astype(float), rng); exact = True
+            m, f_true = inject(t, quiet.m[i].astype(float), rng); exact = True; binary = INJECTED[0] in EB_SHAPES
         elif src < 0.85:
             real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
             t, e = real.t[i], np.asarray(real.e[i], float)
-            m, f_true = inject(t, synthetic_noise(t, e, rng), rng); exact = True
+            m, f_true = inject(t, synthetic_noise(t, e, rng), rng); exact = True; binary = INJECTED[0] in EB_SHAPES
         else:
-            positive, f_true, exact = False, np.nan, False
+            positive, f_true, exact, binary = False, np.nan, False, False
             u = rng.uniform()
             if u < 0.35:                                    # real light curve, magnitudes shuffled in time:
                 real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
@@ -258,7 +290,7 @@ def batch_arrays(reals, quiet, B, rng):
                 real = reals[rng.integers(len(reals))]; i = rng.integers(len(real))
                 t, e = real.t[i], np.asarray(real.e[i], float); m = synthetic_noise(t, e, rng)
         span = np.ptp(t)
-        f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng, exact)
+        f = f_true + rng.uniform(-0.05, 0.05) / span if positive else negative_freq(f_true, span, rng, exact, binary)
         t, m, e = thin(np.asarray(t), np.asarray(m, float), np.asarray(e, float), rng)
         t, m, e = augment(t, m, e, rng)
         times.append(t); mags.append(m); errs.append(e); freqs.append(f); labels.append(float(positive))
@@ -328,6 +360,8 @@ def main():
     ap.add_argument("--workers", type=int, default=6, help="processes building batches")
     ap.add_argument("--quasi", type=float, default=0.0, help="fraction of injections that are quasi-periodic")
     ap.add_argument("--width", type=int, default=96); ap.add_argument("--blocks", type=int, default=8)
+    ap.add_argument("--hard-eb", type=float, default=0.0, help="share of injections that are near-equal-minima binaries")
+    ap.add_argument("--init", help="start from these weights (fine-tuning)")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -341,11 +375,16 @@ def main():
     print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
           "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
-    global VIEWS, QUASI
+    global VIEWS, QUASI, HARD_EB
     VIEWS = tuple(a.views)
     QUASI = a.quasi
-    json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi}, open(out / "config.json", "w"))
+    HARD_EB = a.hard_eb
+    json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi, "hard_eb": a.hard_eb,
+               "init": a.init}, open(out / "config.json", "w"))
     model = PeriodsNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
+    if a.init:
+        state = torch.load(a.init, map_location="cpu", weights_only=True)
+        model.load_state_dict(state.get("state_dict", state))
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.steps)
     loss_fn = torch.nn.BCEWithLogitsLoss()
