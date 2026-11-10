@@ -83,7 +83,7 @@ def estimate_errors(t, m):
 
 
 @torch.no_grad()
-def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_points=MAX_POINTS, tta=None):
+def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_points=MAX_POINTS, tta=None, embed=False):
     """Light curves longer than max_points are scored on a fixed random subset of that size
     (as in training); batches shrink as light curves grow to bound memory."""
     t, m = np.asarray(t, float), np.asarray(m, float)
@@ -106,6 +106,7 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
         tta = getattr(model, "tta", None) or TTA
     variants = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][:max(1, tta)]
     batch = max(1, batch // len(variants))
+    emb_out = None
     for s in range(0, len(freqs), batch):
         f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
         B = len(f)
@@ -119,9 +120,19 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
         for sign_m, sign_t in variants:
             xv = x * sign if sign_m < 0 else x
             xs.append(xv.flip(-1) if sign_t < 0 else xv)
-        logit = model.logits(torch.cat(xs), g.expand(B * len(xs), -1)).float().view(len(xs), B).mean(0)
+        if embed:
+            em = model.embed(torch.cat(xs), g.expand(B * len(xs), -1)).float()
+            head = model.members[0].head if hasattr(model, "members") else model.head
+            logit = (model.logits(torch.cat(xs), g.expand(B * len(xs), -1)).float() if hasattr(model, "members")
+                     else head(em).squeeze(-1)).view(len(xs), B).mean(0)
+            em = em.view(len(xs), B, -1).mean(0).cpu().numpy()
+            if emb_out is None:
+                emb_out = np.empty((len(freqs), em.shape[1]), np.float32)
+            emb_out[s:s + B] = em
+        else:
+            logit = model.logits(torch.cat(xs), g.expand(B * len(xs), -1)).float().view(len(xs), B).mean(0)
         out[s:s + B] = 1.0 - torch.sigmoid(logit).cpu().numpy()   # P(real) -> FAP
-    return out
+    return (out, emb_out) if embed else out
 
 
 def _score(t, m, freqs, model, device, batch, exact=False, err=None, tta=None):
@@ -334,8 +345,8 @@ def _grid_peaks(power, n, f0, df, sep=5):
     return out
 
 
-def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
-            proposers=("ls", "mhls"), tta=None):
+def _hybrid_candidates(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch,
+                       proposers=("ls", "mhls"), tta=None):
     """Fast classical periodograms propose, the network decides.
 
     Proposers run over the whole frequency grid in O(N + M log M) ("ls": generalised
@@ -352,7 +363,7 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     df = 1.0 / (oversample * span)
     fmin = fmin or 2.0 / span
     nf = max(1, int(np.floor((fmax - fmin) / df)))
-    cands = []
+    cands, powers = [], {}
     for name in proposers:
         if name == "ls":
             power = gls_fast(t, m, e, fmin, df, nf, device)
@@ -362,6 +373,7 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
             power = -pdm_theta(t, m, fmin + df * np.arange(nf), device)
         else:
             raise ValueError(f"unknown proposer {name!r}")
+        powers[name] = power
         cands += _grid_peaks(power, n_candidates, fmin, df)
     cands = np.array([c * r for c in cands for r in HARMONICS])
     cands = np.unique(np.round(cands[(cands >= fmin) & (cands <= fmax)], 12))
@@ -373,6 +385,26 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
             peaks.append((1.0 / cands[i], float(f_ap[i])))
         if len(peaks) == 10:
             break
+    return {"t": t, "m": m, "e": e, "df": df, "fmin": fmin, "cands": cands, "f_ap": f_ap, "peaks": peaks,
+            "powers": powers}
+
+
+def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, prefer_shorter,
+            proposers=("ls", "mhls"), tta=None):
+    """See _hybrid_candidates; then the ranker (if the model has one) picks from the shortlist,
+    and the winner is refined exactly."""
+    c = _hybrid_candidates(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, batch, proposers, tta)
+    t, m, e, df, fmin, cands, f_ap, peaks, powers = (c[k] for k in ("t", "m", "e", "df", "fmin", "cands", "f_ap",
+                                                                     "peaks", "powers"))
+    ranker = getattr(net, "ranker", None)
+    if ranker is not None and len(peaks) > 1:     # second stage: compare the shortlist together
+        feats = shortlist_features(t, m, e, np.array([1 / p for p, _ in peaks]), np.array([a for _, a in peaks]),
+                                   powers, fmin, df, net, device, tta)
+        with torch.no_grad():
+            sc = ranker(*(torch.tensor(feats[k], device=device)[None] for k in ("emb", "scalar", "rel")),
+                        torch.ones(1, len(peaks), dtype=torch.bool, device=device))[0]
+        k = int(torch.argmax(sc))
+        peaks = [peaks[k]] + peaks[:k] + peaks[k + 1:]
     best, best_f = peaks[0]
     note = ""
     half = [p for p in peaks if abs(p[0] - best / 2) < 0.01 * best / 2]
@@ -386,6 +418,43 @@ def _hybrid(time, mag, err, fmin, fmax, oversample, n_candidates, net, device, b
     peaks[0 if not note else next(i for i, p in enumerate(peaks) if p == half[0])] = (best, best_f)
     o = np.argsort(cands)
     return Periodogram(cands[o], f_ap[o], peaks, best, best_f, note)
+
+
+def relation_matrix(freqs, df):
+    """(K, K, len(RELATIONS)) one-hot: how candidate i relates to candidate j."""
+    from .models import RELATIONS
+    K = len(freqs); R = np.zeros((K, K, len(RELATIONS)), np.float32)
+    ratios = {"same": 1.0, "x2": 2.0, "x1/2": 0.5, "x3": 3.0, "x1/3": 1 / 3, "x3/2": 1.5, "x2/3": 2 / 3}
+    for i in range(K):
+        for j in range(K):
+            r = freqs[i] / freqs[j]
+            for name, v in ratios.items():
+                if abs(r / v - 1) < 0.01:
+                    R[i, j, RELATIONS.index(name)] = 1
+            d = abs(freqs[i] - freqs[j])
+            if any(abs(d - k / 0.99726957) < max(3 * df, 0.003) for k in (1, 2)):
+                R[i, j, RELATIONS.index("daily alias")] = 1
+            if abs(d - 1 / 365.25) < max(1.5 * df, 2e-4) and i != j:
+                R[i, j, RELATIONS.index("yearly alias")] = 1
+    return R
+
+
+def shortlist_features(t, m, e, freqs, faps, powers, fmin, df, net, device, tta=None):
+    """Inputs of the candidate ranker for a shortlist (freqs, their fold FAPs): the network's
+    fold summaries (TTA-averaged), per-candidate scalars and pairwise relations. Used both to
+    build the ranker's training data and inside periodogram(), so the two cannot drift."""
+    _, emb = _score_binned(t, m, e, freqs, net, device, tta=tta, embed=True)
+    span = np.ptp(t)
+    def at(name):
+        if name not in powers:
+            return np.zeros(len(freqs))
+        return np.interp((freqs - fmin) / df, np.arange(len(powers[name])), powers[name])
+    fa = np.clip(np.asarray(faps, float), 1e-7, 1 - 1e-7)
+    scalar = np.stack([np.log10(fa), np.log(fa / (1 - fa)), at("ls"), at("mhls"), np.log10(freqs),
+                       np.log10(freqs * span), np.arange(len(freqs)) / 10.0,
+                       np.full(len(freqs), np.log10(len(t)))], 1).astype(np.float32)
+    return {"emb": emb.astype(np.float32), "scalar": scalar, "rel": relation_matrix(np.asarray(freqs), df),
+            "freqs": np.asarray(freqs, float)}
 
 
 SIDEREAL_DAY = 0.99726957     # days; daily sampling alias is |f +- 1/SIDEREAL_DAY|

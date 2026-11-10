@@ -131,12 +131,55 @@ class PeriodsNet(nn.Module):
         self.glob = nn.Sequential(nn.Linear(n_global, 32), nn.ReLU())
         self.head = nn.Sequential(nn.Linear(2 * width + 32, 128), nn.ReLU(), nn.Linear(128, 1))
 
-    def logits(self, x, g):
+    def embed(self, x, g):
+        """The fold summary the head reads: (B, 2 * width + 32)."""
         h = self.blocks(self.stem(x))
-        return self.head(torch.cat([h.mean(-1), h.amax(-1), self.glob(g)], 1)).squeeze(-1)
+        return torch.cat([h.mean(-1), h.amax(-1), self.glob(g)], 1)
+
+    def logits(self, x, g):
+        return self.head(self.embed(x, g)).squeeze(-1)
 
     def forward(self, x, g):
         return torch.sigmoid(self.logits(x, g))
+
+
+# Relations between two candidate frequencies f_i, f_j that the ranker is told about.
+RELATIONS = ("same", "x2", "x1/2", "x3", "x1/3", "x3/2", "x2/3", "daily alias", "yearly alias")
+
+
+class CandidateRanker(nn.Module):
+    """Second stage of the search: looks at the shortlisted candidates together and picks one.
+
+    Each candidate is described by the network's fold summary (embed) and a few scalars
+    (fold FAP, periodogram powers, frequency, cycles, rank); attention between candidates is
+    biased by how they are related (2x, 1/2x, 3x, aliases, ...), so the choice between a
+    period and its harmonics is made by comparison rather than candidate by candidate."""
+
+    def __init__(self, n_emb=224, n_scalar=8, d=128, heads=4, layers=2):
+        super().__init__()
+        self.inp = nn.Sequential(nn.Linear(n_emb + n_scalar, d), nn.ReLU(), nn.Linear(d, d))
+        self.rel = nn.ModuleList([nn.Linear(len(RELATIONS), heads, bias=False) for _ in range(layers)])
+        self.attn = nn.ModuleList([nn.MultiheadAttention(d, heads, batch_first=True) for _ in range(layers)])
+        self.ff = nn.ModuleList([nn.Sequential(nn.Linear(d, 2 * d), nn.ReLU(), nn.Linear(2 * d, d)) for _ in range(layers)])
+        self.n1 = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
+        self.n2 = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
+        self.out = nn.Linear(d, 1)
+        self.heads = heads
+
+    def forward(self, emb, scalar, rel, mask):
+        """emb (B,K,E), scalar (B,K,S), rel (B,K,K,R), mask (B,K) True for real candidates.
+        Returns (B,K) scores; padded slots get -inf."""
+        h = self.inp(torch.cat([emb, scalar], -1))
+        B, K, _ = h.shape
+        pad = ~mask
+        for rel_lin, attn, ff, n1, n2 in zip(self.rel, self.attn, self.ff, self.n1, self.n2):
+            bias = rel_lin(rel).permute(0, 3, 1, 2).reshape(B * self.heads, K, K)
+            bias = bias.masked_fill(pad[:, None, None, :].expand(B, self.heads, K, K).reshape(B * self.heads, K, K),
+                                    float("-inf"))
+            a, _ = attn(h, h, h, attn_mask=bias, need_weights=False)
+            h = n1(h + a)
+            h = n2(h + ff(h))
+        return self.out(h).squeeze(-1).masked_fill(pad, float("-inf"))
 
 
 class Ensemble(nn.Module):
@@ -153,6 +196,9 @@ class Ensemble(nn.Module):
 
     def logits(self, x, g):
         return torch.stack([m.logits(x, g) for m in self.members]).mean(0)
+
+    def embed(self, x, g):
+        return torch.stack([m.embed(x, g) for m in self.members]).mean(0)
 
     def forward(self, x, g):
         return torch.sigmoid(self.logits(x, g))
