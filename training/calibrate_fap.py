@@ -41,8 +41,15 @@ def _init(sample, opts):
 
 
 def null_search(args):
+    import importlib
     import nn_periodogram as nnp
     seed, lo, hi, model = args
+    if OPTS.get("ranker"):
+        P = importlib.import_module("nn_periodogram.periodogram")
+        import torch as _t
+        net = P._model(model, _t.device(OPTS.get("device", "cpu")), OPTS.get("weights"))
+        if getattr(net, "ranker", None) is None:
+            net.ranker = nnp.hub.load_ranker(OPTS["ranker"]).to(OPTS.get("device", "cpu"))
     rng = np.random.default_rng(seed)
     n = int(round(10 ** rng.uniform(lo, hi)))
     pool = [c for c in CADENCES if len(c[0]) >= n] or CADENCES
@@ -70,12 +77,12 @@ def main():
     ap.add_argument("--sample", required=True); ap.add_argument("--model", default="periods-v4")
     ap.add_argument("--per-bin", type=int, default=1500); ap.add_argument("--procs", type=int, default=8)
     ap.add_argument("--device", default="cpu"); ap.add_argument("--tta", type=int); ap.add_argument("--weights")
-    ap.add_argument("--name", help="calibration file name (default: the model name)")
+    ap.add_argument("--name", help="calibration file name (default: the model name)"); ap.add_argument("--ranker")
     a = ap.parse_args()
     jobs = [(1000 * b + j, EDGES[b], EDGES[b + 1], a.model) for b in range(len(EDGES) - 1) for j in range(a.per_bin)]
     import multiprocessing as mp
     ctx = mp.get_context("spawn")                     # CUDA cannot be shared by forked workers
-    with ctx.Pool(a.procs, initializer=_init, initargs=(a.sample, {"device": a.device, "tta": a.tta, "weights": a.weights})) as pool:
+    with ctx.Pool(a.procs, initializer=_init, initargs=(a.sample, {"device": a.device, "tta": a.tta, "weights": a.weights, "ranker": a.ranker})) as pool:
         res = pool.map(null_search, jobs, chunksize=8)
     bins = []
     for b in range(len(EDGES) - 1):
@@ -91,7 +98,7 @@ def main():
               f"{10 ** -np.median(s):.3g}, 1% quantile {10 ** -np.quantile(s, 0.99):.3g}", flush=True)
     out = ROOT / "nn_periodogram" / "data" / f"calibration_{a.name or a.model}.json"
     out.parent.mkdir(exist_ok=True)
-    json.dump({"model": a.name or a.model, "tta": a.tta, "bins": bins}, open(out, "w"))
+    json.dump({"model": a.name or a.model, "tta": a.tta, "ranker": bool(a.ranker), "bins": bins}, open(out, "w"))
     print("wrote", out)
 
 
