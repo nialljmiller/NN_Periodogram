@@ -59,7 +59,9 @@ def fetch(name=DEFAULT, path=None, member=None):
     info = MODELS[name]
     if path is not None:
         return Path(path)
-    if member is not None:
+    if member == "ranker":
+        info = {**info, **info["ranker"]}
+    elif member is not None:
         info = {**info, "file": info["files"][member], "sha256": info["sha256s"][member]}
     target = cache_dir() / info["file"]
     if target.exists() and (info["sha256"] is None or _sha256(target) == info["sha256"]):
@@ -95,7 +97,20 @@ def load(name=DEFAULT, path=None, device=None):
         return model.eval().to(device or default_device())
     model = _load_one(info, fetch(name, path))
     model.tta = info.get("tta", 1)
+    if path is None and "ranker" in info:          # second stage: picks among the shortlist
+        model.ranker = load_ranker(fetch(name, member="ranker"))
     return model.eval().to(device or default_device())
+
+
+def load_ranker(path):
+    """A CandidateRanker from its weights file (sizes read from the weights)."""
+    from .models import CandidateRanker
+    st = torch.load(path, map_location="cpu", weights_only=True)
+    st = st.get("state_dict", st)
+    n_scalar = st["scalar_mean"].shape[0]
+    r = CandidateRanker(n_emb=st["inp.1.weight"].shape[1] - n_scalar, n_scalar=n_scalar, d=st["inp.1.weight"].shape[0])
+    r.load_state_dict(st)
+    return r.eval()
 
 
 def _load_one(info, path):

@@ -93,6 +93,14 @@ def run(a):
     device = torch.device(a.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     if device.type == "cpu":
         torch.set_num_threads(a.threads)
+    if a.ranker:
+        import importlib
+        P = importlib.import_module("nn_periodogram.periodogram")
+        from nn_periodogram import hub
+        for method in a.methods:
+            if method.startswith("hybrid:"):
+                _, name, weights = method.split(":")[:3]
+                P._model(name, device, weights).ranker = hub.load_ranker(a.ranker).to(device)
     done = set()
     if Path(a.out).exists():
         done = {(r["survey"], r["method"]) for r in map(json.loads, open(a.out))}
@@ -195,6 +203,7 @@ def main():
     ap.add_argument("--n", type=int, default=600); ap.add_argument("--fmax", type=float, default=10.0)
     ap.add_argument("--seed", type=int, default=11); ap.add_argument("--device")
     ap.add_argument("--threads", type=int, default=4, help="CPU threads when --device cpu")
+    ap.add_argument("--ranker", help="attach this candidate ranker to the hybrid models")
     a = ap.parse_args()
     if a.summary:
         summary(a.summary)
