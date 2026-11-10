@@ -57,8 +57,20 @@ def job(args):
     import nn_periodogram as nnp
     i, kwargs = args
     tta = kwargs.pop("_tta", 1)
+    ranker = kwargs.pop("_ranker", None)
     import importlib
-    importlib.import_module("nn_periodogram.periodogram").TTA = tta
+    P = importlib.import_module("nn_periodogram.periodogram")
+    P.TTA = tta
+    if ranker:                                  # attach the second stage exactly as a release would
+        import torch as _t
+        from nn_periodogram import hub
+        from nn_periodogram.models import CandidateRanker
+        net = P._model(kwargs.get("model", hub.DEFAULT), _t.device("cpu"), kwargs.get("weights"))
+        if getattr(net, "ranker", None) is None:
+            st = _t.load(ranker, map_location="cpu", weights_only=True)
+            r = CandidateRanker(n_emb=st["inp.1.weight"].shape[1] - st["scalar_mean"].shape[0],
+                                n_scalar=st["scalar_mean"].shape[0])
+            r.load_state_dict(st); net.ranker = r.eval()
     d, meta = DATA
     off = d["offsets"]
     t, m, e = (d[k][off[i]:off[i + 1]].astype(float) for k in ("time", "mag", "err"))
@@ -83,7 +95,7 @@ def main():
     ap.add_argument("--proposers", nargs="+", default=None); ap.add_argument("--n-candidates", type=int, default=None)
     ap.add_argument("--weights"); ap.add_argument("--model", default=None)
     ap.add_argument("--procs", type=int, default=8); ap.add_argument("--surveys", nargs="+")
-    ap.add_argument("--tta", type=int, default=1)
+    ap.add_argument("--tta", type=int, default=1); ap.add_argument("--ranker")
     a = ap.parse_args()
     kwargs = {}
     if a.proposers:
@@ -95,6 +107,7 @@ def main():
     if a.model:
         kwargs["model"] = a.model
     kwargs["_tta"] = a.tta
+    kwargs["_ranker"] = a.ranker
     meta = json.loads(str(np.load(a.sample)["meta"]))
     with Pool(a.procs, initializer=_init, initargs=(a.sample,)) as p:
         idx = [i for i, r in enumerate(meta) if not a.surveys or r["survey"] in a.surveys]
