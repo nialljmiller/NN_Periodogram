@@ -212,12 +212,13 @@ class CandidateRanker(nn.Module):
     biased by how they are related (2x, 1/2x, 3x, aliases, ...), so the choice between a
     period and its harmonics is made by comparison rather than candidate by candidate."""
 
-    def __init__(self, n_emb=224, n_scalar=8, d=128, heads=4, layers=2):
+    def __init__(self, n_emb=224, n_scalar=8, d=128, heads=4, layers=2, dropout=0.1):
         super().__init__()
-        self.inp = nn.Sequential(nn.Linear(n_emb + n_scalar, d), nn.ReLU(), nn.Linear(d, d))
+        self.inp = nn.Sequential(nn.Dropout(dropout), nn.Linear(n_emb + n_scalar, d), nn.ReLU(), nn.Linear(d, d))
         self.rel = nn.ModuleList([nn.Linear(len(RELATIONS), heads, bias=False) for _ in range(layers)])
-        self.attn = nn.ModuleList([nn.MultiheadAttention(d, heads, batch_first=True) for _ in range(layers)])
-        self.ff = nn.ModuleList([nn.Sequential(nn.Linear(d, 2 * d), nn.ReLU(), nn.Linear(2 * d, d)) for _ in range(layers)])
+        self.attn = nn.ModuleList([nn.MultiheadAttention(d, heads, dropout=dropout, batch_first=True) for _ in range(layers)])
+        self.ff = nn.ModuleList([nn.Sequential(nn.Linear(d, 2 * d), nn.ReLU(), nn.Dropout(dropout), nn.Linear(2 * d, d))
+                                 for _ in range(layers)])
         self.n1 = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
         self.n2 = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
         self.out = nn.Linear(d, 1)

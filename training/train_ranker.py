@@ -55,17 +55,24 @@ def main():
     ap.add_argument("--train", required=True); ap.add_argument("--val", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int, default=40); ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch", type=int, default=512); ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--dropout", type=float, default=0.1); ap.add_argument("--wd", type=float, default=1e-2)
     a = ap.parse_args()
     torch.manual_seed(a.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tr, va = load(a.train, device), load(a.val, device)
-    model = CandidateRanker(n_emb=tr["emb"].shape[2], n_scalar=tr["scalar"].shape[2]).to(device)
+    full, va = load(a.train, device), load(a.val, device)
+    # hold out 10% of the training stars to choose the epoch; the validation stars stay untouched
+    g = torch.Generator().manual_seed(a.seed); perm = torch.randperm(len(full["mask"]), generator=g).to(device)
+    cut = len(perm) // 10
+    def take(d, idx):
+        o = {k: v[idx] for k, v in d.items() if k != "source"}; o["source"] = d["source"][idx.cpu().numpy()]; return o
+    ho, tr = take(full, perm[:cut]), take(full, perm[cut:])
+    model = CandidateRanker(n_emb=tr["emb"].shape[2], n_scalar=tr["scalar"].shape[2], dropout=a.dropout).to(device)
     m = tr["mask"][..., None].float()
     mean = (tr["scalar"] * m).sum((0, 1)) / m.sum((0, 1))
     std = (((tr["scalar"] - mean) ** 2 * m).sum((0, 1)) / m.sum((0, 1))).sqrt().clamp_min(1e-3)
     model.scalar_mean.copy_(mean); model.scalar_std.copy_(std)
     target = torch.where(tr["label"] >= 0, tr["label"], torch.zeros_like(tr["label"]))
-    opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.wd)
     n = len(target); steps = a.epochs * ((n + a.batch - 1) // a.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=steps)
     best = -1
@@ -82,11 +89,13 @@ def main():
             opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         model.eval()
         r, b, rows = report(va, picks(model, va))
+        rh, bh, _ = report(ho, picks(model, ho))
         rt, bt, _ = report(tr, picks(model, tr))
-        print(f"epoch {ep + 1:2d}  train {100 * bt:.2f}->{100 * rt:.2f}%  val {100 * b:.2f}->{100 * r:.2f}%   {rows}", flush=True)
-        if r > best:
-            best = r; torch.save(model.state_dict(), a.out)
-    print(f"best validation: {100 * best:.2f}% right (first pass {100 * base_val:.2f}%) -> {a.out}")
+        print(f"epoch {ep + 1:2d}  train {100 * bt:.2f}->{100 * rt:.2f}%  holdout {100 * bh:.2f}->{100 * rh:.2f}%  "
+              f"val {100 * b:.2f}->{100 * r:.2f}%   {rows}", flush=True)
+        if rh > best:                                    # chosen on the training holdout only
+            best = rh; best_val = r; torch.save(model.state_dict(), a.out)
+    print(f"chosen epoch: holdout {100 * best:.2f}%, validation {100 * best_val:.2f}% (first pass {100 * base_val:.2f}%) -> {a.out}")
 
 
 if __name__ == "__main__":
