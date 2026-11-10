@@ -34,6 +34,8 @@ MODELS = {
         "build": partial(PeriodsNet, views=(1.0, 0.5, 2.0)),
         "prefer_shorter": False,
         "tta": 4,             # average over flipped / time-reversed folds: +0.7 points on validation
+        "ranker": {"file": "nn_periodogram_ranker_v4.pt", "release": "v1.2.0",
+                   "sha256": "8cae591c057a2f77c2b2f8518db2a18968ec6241e899586c296038b753b7d486"},   # second stage: +2.6 points on validation
         "description": "Circular CNN seeing the folds at P, 2P and P/2 side by side; trained on OGLE, "
                        "Kepler, TESS, ASAS-SN and VVV light curves plus injected signals (2026).",
     },
