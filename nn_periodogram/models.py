@@ -222,10 +222,13 @@ class CandidateRanker(nn.Module):
         self.n2 = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
         self.out = nn.Linear(d, 1)
         self.heads = heads
+        self.register_buffer("scalar_mean", torch.zeros(n_scalar))
+        self.register_buffer("scalar_std", torch.ones(n_scalar))
 
     def forward(self, emb, scalar, rel, mask):
         """emb (B,K,E), scalar (B,K,S), rel (B,K,K,R), mask (B,K) True for real candidates.
         Returns (B,K) scores; padded slots get -inf."""
+        scalar = (scalar - self.scalar_mean) / self.scalar_std
         h = self.inp(torch.cat([emb, scalar], -1))
         B, K, _ = h.shape
         pad = ~mask
