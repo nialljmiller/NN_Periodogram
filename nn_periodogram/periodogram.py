@@ -135,8 +135,55 @@ def _score_binned(t, m, e, freqs, model, device, max_elements=2 ** 24, max_point
     return (out, emb_out) if embed else out
 
 
+@torch.no_grad()
+def _score_points(t, m, e, freqs, model, device, max_points=MAX_POINTS, tta=None, embed=False):
+    """Scoring for PointBinNet (learned binning): the augmented versions are recomputed."""
+    from .features import point_inputs
+    t, m = np.asarray(t, float), np.asarray(m, float)
+    e = estimate_errors(t, m) if e is None else np.asarray(e, float)
+    ok = np.isfinite(t) & np.isfinite(m) & np.isfinite(e) & (e > 0)
+    t, m, e = t[ok], m[ok], e[ok]
+    if max_points and len(t) > max_points:
+        keep = np.sort(np.random.default_rng(0).choice(len(t), max_points, replace=False))
+        t, m, e = t[keep], m[keep], e[keep]
+    w = torch.ones(1, len(t), device=device)
+    z, ze = robust_normalise(torch.tensor(m, dtype=torch.float32, device=device)[None],
+                             torch.tensor(e, dtype=torch.float32, device=device)[None], w)
+    g = global_features(z, ze, w)
+    tt = torch.tensor(t - t.min(), dtype=torch.float64)
+    if tta is None:
+        tta = getattr(model, "tta", None) or TTA
+    variants = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)][:max(1, tta)]
+    per = len(t) * len(model.views) * len(model.resolutions) * 24      # floats per fold in the point network
+    batch = max(1, min(1024, 2 ** 26 // per) // len(variants))
+    out = np.empty(len(freqs), np.float32); emb_out = None
+    for s in range(0, len(freqs), batch):
+        f = torch.tensor(freqs[s:s + batch], dtype=torch.float64)
+        B = len(f)
+        logit, em = 0.0, 0.0
+        for sign_m, sign_t in variants:
+            zz = (z * sign_m).expand(B, -1)
+            inp = point_inputs(sign_t * tt[None, :], f, zz, ze.expand(B, -1), w.expand(B, -1), model.views, device)
+            if sign_t < 0:                                   # reversed time: tn -> 1 - tn
+                inp = inp[:4] + (1.0 - inp[4],)
+            e_ = model.embed(inp, g.expand(B, -1)).float()
+            logit = logit + model.head(e_).squeeze(-1)
+            if embed:
+                em = em + e_
+        out[s:s + B] = 1.0 - torch.sigmoid(logit / len(variants)).cpu().numpy()
+        if embed:
+            em = (em / len(variants)).cpu().numpy()
+            if emb_out is None:
+                emb_out = np.empty((len(freqs), em.shape[1]), np.float32)
+            emb_out[s:s + B] = em
+    return (out, emb_out) if embed else out
+
+
 def _score(t, m, freqs, model, device, batch, exact=False, err=None, tta=None):
-    if getattr(model, "input_kind", "legacy") == "binned":
+    kind = getattr(model, "input_kind", "legacy")
+    if kind == "points":
+        return _score_points(t, m, err, freqs, model, device, tta=tta)
+    if kind == "binned":
         return _score_binned(t, m, err, freqs, model, device, tta=tta)
     return _score_legacy(t, m, freqs, model, device, batch, exact)
 
@@ -443,7 +490,8 @@ def shortlist_features(t, m, e, freqs, faps, powers, fmin, df, net, device, tta=
     """Inputs of the candidate ranker for a shortlist (freqs, their fold FAPs): the network's
     fold summaries (TTA-averaged), per-candidate scalars and pairwise relations. Used both to
     build the ranker's training data and inside periodogram(), so the two cannot drift."""
-    _, emb = _score_binned(t, m, e, freqs, net, device, tta=tta, embed=True)
+    scorer = _score_points if getattr(net, "input_kind", "") == "points" else _score_binned
+    _, emb = scorer(t, m, e, freqs, net, device, tta=tta, embed=True)
     span = np.ptp(t)
     def at(name):
         if name not in powers:

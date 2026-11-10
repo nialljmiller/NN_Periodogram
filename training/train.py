@@ -299,9 +299,22 @@ def batch_arrays(reals, quiet, B, rng):
     return T, w, M, E, np.array(freqs), np.array(labels, np.float32)
 
 
+ENCODER = "bins"   # set from --encoder: "bins" (PeriodsNet) or "points" (PointBinNet, learned binning)
+
+
 def features(arrays, device):
     """Padded arrays from batch_arrays -> network inputs on `device`."""
     T, w, M, E, freqs, labels = (np.asarray(a) for a in arrays)
+    if ENCODER == "points":
+        from nn_periodogram.features import point_inputs
+        w_t = torch.tensor(w, dtype=torch.float32, device=device)
+        z, ze = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device),
+                                 torch.tensor(np.where(w > 0, E, 1.0), dtype=torch.float32, device=device), w_t)
+        Tm = np.where(w > 0, T, 0.0)
+        Tm = Tm - np.where(w > 0, T, np.inf).min(1, keepdims=True)          # each light curve from 0
+        inp = point_inputs(torch.tensor(np.where(w > 0, Tm, 0.0), dtype=torch.float64),
+                           torch.tensor(freqs, dtype=torch.float64), z, ze, w_t, VIEWS, device)
+        return inp, global_features(z, ze, w_t), torch.tensor(labels, device=device)
     w_t = torch.tensor(w, dtype=torch.float32, device=device)
     z, ze = robust_normalise(torch.tensor(M, dtype=torch.float32, device=device),
                              torch.tensor(np.where(w > 0, E, 1.0), dtype=torch.float32, device=device), w_t)
@@ -364,6 +377,7 @@ def main():
     ap.add_argument("--hard-eb", type=float, default=0.0, help="share of injections that are near-equal-minima binaries")
     ap.add_argument("--init", help="start from these weights (fine-tuning)")
     ap.add_argument("--hard-neg", type=float, default=0.6, help="share of a binary's negatives at its P/2 or 2P")
+    ap.add_argument("--encoder", choices=["bins", "points"], default="bins", help="points = learned per-bin encoder")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -377,14 +391,19 @@ def main():
     print("train real:", {r: len(s) for r, s in zip(a.real, tr_real)}, "quiet", len(tr_quiet),
           "| val real:", {r: len(s) for r, s in zip(a.real, va_real)}, "quiet", len(va_quiet), flush=True)
 
-    global VIEWS, QUASI, HARD_EB, HARD_NEG
+    global VIEWS, QUASI, HARD_EB, HARD_NEG, ENCODER
     VIEWS = tuple(a.views)
     QUASI = a.quasi
     HARD_EB = a.hard_eb
     HARD_NEG = a.hard_neg
-    json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi, "hard_eb": a.hard_eb,
+    ENCODER = a.encoder
+    json.dump({"views": VIEWS, "width": a.width, "blocks": a.blocks, "quasi": a.quasi, "hard_eb": a.hard_eb, "encoder": a.encoder,
                "init": a.init}, open(out / "config.json", "w"))
-    model = PeriodsNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
+    if a.encoder == "points":
+        from nn_periodogram.models import PointBinNet
+        model = PointBinNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
+    else:
+        model = PeriodsNet(views=VIEWS, width=a.width, dilations=((1, 2, 4, 8) * 4)[:a.blocks]).to(device)
     if a.init:
         state = torch.load(a.init, map_location="cpu", weights_only=True)
         model.load_state_dict(state.get("state_dict", state))

@@ -103,7 +103,14 @@ def _load_one(info, path):
     config = {}
     if "state_dict" in state:            # release files: {"state_dict": ..., "config": {...}}
         state, config = state["state_dict"], state.get("config", {})
-    if "stem.0.weight" in state:         # PeriodsNet: views, width and depth are fixed by the weights
+    if "phi.0.weight" in state:          # PointBinNet (learned binning)
+        from .models import PointBinNet
+        width = state["stem.0.weight"].shape[0]
+        n_blocks = len({k.split(".")[1] for k in state if k.startswith("blocks.")})
+        model = PointBinNet(views=tuple(config.get("views", (1.0, 0.5, 2.0))), width=int(width),
+                            d=state["phi.2.weight"].shape[0], hidden=state["phi.0.weight"].shape[0],
+                            dilations=((1, 2, 4, 8) * 4)[:n_blocks])
+    elif "stem.0.weight" in state:       # PeriodsNet: views, width and depth are fixed by the weights
         width, n_in = state["stem.0.weight"].shape[:2]
         views = tuple(config.get("views", (1.0, 0.5, 2.0)[:n_in // 16]))
         n_blocks = len({k.split(".")[1] for k in state if k.startswith("blocks.")})

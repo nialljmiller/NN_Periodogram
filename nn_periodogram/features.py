@@ -206,3 +206,17 @@ def phase_device(device):
     """Where double-precision phases are computed: the device itself, except Apple MPS (no float64)."""
     device = torch.device(device)
     return torch.device("cpu") if device.type == "mps" else device
+
+
+def point_inputs(t, freqs, z, ze, w, views=(1.0,), device=None):
+    """Inputs of PointBinNet: per-view phases (B, V, L) and z, ze, w, scaled time (B, L).
+    t is (B, L) or (1, L) float64 (phases in double precision, as in profile_views)."""
+    device = device or z.device
+    pdev = phase_device(device)
+    tt, ff = t.to(pdev, torch.float64), freqs.to(pdev, torch.float64)
+    ph = torch.stack([torch.remainder(tt * (ff[:, None] * r), 1.0) for r in views], 1).to(device, torch.float32)
+    t32 = tt.to(device, torch.float32).expand(z.shape[0], -1)
+    big = torch.where(w > 0, t32, torch.full_like(t32, float("inf"))).amin(1, keepdim=True)
+    top = torch.where(w > 0, t32, torch.full_like(t32, -float("inf"))).amax(1, keepdim=True)
+    tn = torch.where(w > 0, (t32 - big) / (top - big).clamp_min(1e-9), torch.zeros_like(t32))
+    return ph, z, ze, w, tn

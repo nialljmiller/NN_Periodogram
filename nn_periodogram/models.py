@@ -143,6 +143,63 @@ class PeriodsNet(nn.Module):
         return torch.sigmoid(self.logits(x, g))
 
 
+class PointBinNet(nn.Module):
+    """PeriodsNet with learned binning: instead of fixed per-bin statistics (mean, scatter,
+    error, count), every point of the fold goes through a small shared network and each bin
+    pools the results (mean and max) into a learned summary. The point network sees the
+    point's position within its bin, its magnitude, its error and its time, so the bins can
+    describe sub-bin structure, eclipse bottoms, outliers and whether all seasons agree.
+    The circular CNN on top is the same as PeriodsNet's."""
+    input_kind = "points"
+
+    def __init__(self, views=(1.0, 0.5, 2.0), resolutions=(8, 16, 32, 64), n_bins=64, d=8, hidden=16,
+                 n_global=3, width=96, dilations=(1, 2, 4, 8, 1, 2, 4, 8)):
+        super().__init__()
+        self.views, self.resolutions, self.n_bins, self.d = tuple(views), tuple(resolutions), n_bins, d
+        self.phi = nn.Sequential(nn.Linear(5, hidden), nn.ReLU(), nn.Linear(hidden, d))
+        self.empty = nn.Parameter(torch.zeros(2 * d))
+        n_in = len(self.views) * len(self.resolutions) * (2 * d + 1)
+        self.stem = nn.Sequential(CircConv1d(n_in, width, 5), nn.GroupNorm(8, width), nn.ReLU())
+        self.blocks = nn.Sequential(*[_Res(width, dd) for dd in dilations])
+        self.glob = nn.Sequential(nn.Linear(n_global, 32), nn.ReLU())
+        self.head = nn.Sequential(nn.Linear(2 * width + 32, 128), nn.ReLU(), nn.Linear(128, 1))
+
+    def profile(self, ph, z, ze, w, tn):
+        """ph (B, V, L) phases per view; z, ze, w, tn (B, L). Returns (B, C, n_bins)."""
+        B, V, L = ph.shape
+        d = self.d
+        valid = w > 0
+        base = torch.stack([z, torch.log(ze.clamp_min(1e-3)), ze, tn], -1)            # (B, L, 4)
+        out = []
+        for v in range(V):
+            for nb in self.resolutions:
+                pos = ph[:, v] * nb
+                idx = torch.clamp(pos.long(), 0, nb - 1)
+                u = (pos - idx.to(pos.dtype)) - 0.5                                       # place within the bin
+                e = self.phi(torch.cat([u[..., None], base], -1)) * w[..., None]          # (B, L, d)
+                n = torch.zeros(B, nb, device=ph.device, dtype=e.dtype).scatter_add_(1, idx, w)
+                ie = idx[..., None].expand(-1, -1, d)
+                mean = torch.zeros(B, nb, d, device=ph.device, dtype=e.dtype).scatter_add_(1, ie, e) \
+                    / n.clamp_min(1)[..., None]
+                mx = torch.full((B, nb, d), -1e4, device=ph.device, dtype=e.dtype).scatter_reduce(
+                    1, ie, e.masked_fill(~valid[..., None], -1e4), reduce="amax", include_self=True)
+                f = torch.cat([mean, mx], -1)
+                f = torch.where(n[..., None] > 0, f, self.empty.to(f.dtype).expand(B, nb, 2 * d))
+                f = torch.cat([f, torch.log1p(n)[..., None]], -1)                          # (B, nb, 2d + 1)
+                out.append(f.repeat_interleave(self.n_bins // nb, dim=1))
+        return torch.cat(out, -1).transpose(1, 2)
+
+    def embed(self, inp, g):
+        h = self.blocks(self.stem(self.profile(*inp)))
+        return torch.cat([h.mean(-1), h.amax(-1), self.glob(g)], 1)
+
+    def logits(self, inp, g):
+        return self.head(self.embed(inp, g)).squeeze(-1)
+
+    def forward(self, inp, g):
+        return torch.sigmoid(self.logits(inp, g))
+
+
 # Relations between two candidate frequencies f_i, f_j that the ranker is told about.
 RELATIONS = ("same", "x2", "x1/2", "x3", "x1/3", "x3/2", "x2/3", "daily alias", "yearly alias")
 
