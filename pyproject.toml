@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nn-periodogram"
-version = "1.1.0"
+version = "1.2.0"
 description = "Neural-network false-alarm probabilities and periodograms for astronomical time series"
 readme = "README.md"
 license = {file = "LICENSE"}

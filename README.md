@@ -37,25 +37,25 @@ scored against each catalogue's own period: **correct** within 1%, otherwise **h
 
 | Survey (stars) | **NN_Periodogram** | PDM | Lomb-Scargle |
 |---|---|---|---|
-| OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **93.9%** | 79.1% | 66.0% |
-| Kepler eclipsing binaries (281) | **79.4%** | 47.3% | 5.0% |
-| TESS eclipsing binaries (459) | **78.9%** | 49.2% | 9.4% |
-| VVV: near-infrared, sparse (421; ASAS-SN periods) | **53.0%** | 39.7% | 37.1% |
-| ASAS-SN / VSX, strictly periodic classes (204) | **44.6%** | 36.8% | 29.4% |
-| ASAS-SN / VSX, all classes (585) | **29.4%** | 23.8% | 17.1% |
+| OGLE: RR Lyrae, Cepheids, δ Scuti, eclipsing (559) | **96.4%** | 79.1% | 66.0% |
+| Kepler eclipsing binaries (281) | **82.6%** | 47.3% | 5.0% |
+| TESS eclipsing binaries (459) | **80.8%** | 49.2% | 9.4% |
+| VVV: near-infrared, sparse (421; ASAS-SN periods) | **54.6%** | 39.7% | 37.1% |
+| ASAS-SN / VSX, strictly periodic classes (204) | **47.5%** | 36.8% | 29.4% |
+| ASAS-SN / VSX, all classes (585) | **32.1%** | 23.8% | 17.1% |
 
 Lomb-Scargle numbers are identical for astropy, nifty-ls and an exact implementation. Most
 of the gain is in harmonics: Lomb-Scargle reports half the orbital period of an eclipsing
-binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 2–15%
+binary, and phase dispersion often a multiple; NN_Periodogram's harmonic errors are 1–16%
 where theirs are 11–68%. Every difference from PDM is significant (paired McNemar test,
-p < 10⁻³; p = 0.02 for the 204 strictly periodic ASAS-SN stars). ASAS-SN is low for every
+p < 10⁻³). ASAS-SN is low for every
 method because many VSX classes (semi-regular, rotational, miscellaneous) have catalogue
 periods that a fold need not confirm, and for a third of its stars no periodogram puts the
 true period among its strongest peaks.
 
 **Against the 2022 network.** On the same 100 test stars per survey, the original NN FAP
 network (`legacy-2022`, exhaustive search) recovers 52% (OGLE), 22% (Kepler), 10% (TESS),
-36% (VVV) and 16% (ASAS-SN) of periods, where NN_Periodogram recovers 93, 81, 80, 53 and 29%;
+36% (VVV) and 16% (ASAS-SN) of periods, where NN_Periodogram recovers 96, 85, 82, 56 and 31%;
 it also needs 6–15 s per star on a GPU, 100–200× longer.
 
 **Robustness** (synthetic light curves with known periods; the same light curves for every
@@ -73,7 +73,7 @@ Below about 50 points at signal = noise, no method finds periods reliably.
 
 **False-alarm probability.** `best_fap` is the probability that a light curve with *no*
 periodic signal, of the same size, would produce as good a best fold somewhere in the
-search. It is calibrated (for the default `tta=4`) on 10,500 searches of pure noise (white, red and outlier-ridden,
+search. It is calibrated (for the default search) on 10,500 searches of pure noise (white, red and outlier-ridden,
 on real cadences from all five surveys), because the best of hundreds of folds always looks
 good by chance. On fresh noise, `best_fap < 0.01` flags 0.2% of light curves and
 `best_fap < 0.1` about 5%. The network's FAP of the best fold alone is `best_fap_fold`.
@@ -94,8 +94,9 @@ fraction of a point of accuracy for speed; see the full table on the project pag
 
 * **`periodogram(time, mag, err)`**: standard mode. Fast Lomb-Scargle and 3-harmonic
   Lomb-Scargle periodograms (Press & Rybicki FFT method, in PyTorch) propose their 40
-  strongest peaks, plus 2×, ½×, 3× and ⅓× each; the network scores them all and the best
-  is refined. `proposers=("ls", "mhls", "pdm")` adds phase-dispersion candidates (slower,
+  strongest peaks, plus 2×, ½×, 3× and ⅓× each; the network scores them all; a small
+  ranker then compares the ten best side by side (their folds, scores and how they relate:
+  2×, ½×, aliases) and picks one, which is refined. `proposers=("ls", "mhls", "pdm")` adds phase-dispersion candidates (slower,
   about one point more accurate on eclipsing binaries).
 * **`periodogram(..., method="full")`**: the network scores every trial frequency itself.
 * **`check_period(time, mag, period, err)`**: for a period from a catalogue or another
@@ -122,7 +123,7 @@ SHA-256.
 
 | name | | size |
 |---|---|---|
-| `periods-v4` (default) | Circular 1-D CNN over multi-resolution binned phase profiles of the folds at P, 2P and P/2, with global light-curve features. | 3 MB |
+| `periods-v4` (default) | Circular 1-D CNN over multi-resolution binned phase profiles of the folds at P, 2P and P/2, with global light-curve features; plus the candidate ranker (since 1.2), a 2-layer transformer over the shortlist with relation-aware attention. | 3 MB + 1 MB |
 | `legacy-2022` | The 2022 NN_FAP network (14 × GRU-1024; Miller et al. 2024), ported exactly from Keras. Exhaustive search only. | 343 MB |
 
 ## Training

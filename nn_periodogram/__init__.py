@@ -9,5 +9,5 @@
 
 from .periodogram import PeriodCheck, Periodogram, check_period, fap, periodogram
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __all__ = ["fap", "periodogram", "check_period", "Periodogram", "PeriodCheck", "__version__"]

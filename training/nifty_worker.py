@@ -25,9 +25,9 @@ class Nifty:
     def __init__(self):
         self.proc = subprocess.Popen([sys.executable, "-I", __file__], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
-    def power(self, t, m, e, f0, df, nf):
-        """(power array, seconds spent inside nifty-ls)"""
-        _send(self.proc.stdin, (t, m, e, f0, df, nf))
+    def power(self, t, m, e, f0, df, nf, backend="finufft"):
+        """(power array, seconds spent inside nifty-ls); backend "finufft" (CPU) or "cufinufft" (GPU)."""
+        _send(self.proc.stdin, (t, m, e, f0, df, nf, backend))
         return _recv(self.proc.stdout)
 
     def close(self):
@@ -41,7 +41,7 @@ if __name__ == "__main__":
         job = _recv(inp)
         if job is None:
             break
-        t, m, e, f0, df, nf = job
+        t, m, e, f0, df, nf, backend = job if len(job) == 7 else (*job, "finufft")
         s = time.perf_counter()
-        p = nifty_ls.lombscargle(t, m, e, fmin=f0, fmax=f0 + df * (nf - 1), Nf=nf).power
+        p = nifty_ls.lombscargle(t, m, e, fmin=f0, fmax=f0 + df * (nf - 1), Nf=nf, backend=backend).power
         _send(out, (p, time.perf_counter() - s))

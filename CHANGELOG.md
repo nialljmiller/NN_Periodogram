@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 (2026-11-10)
+
+- **A second stage that compares the finalists.** After the network scores every
+  candidate, a small ranker looks at the best ten together: each one's fold summary from
+  the network, its fold FAP and periodogram powers, and how the candidates relate (2x, 1/2x,
+  3x, 1/3x, 3/2, 2/3, daily and yearly aliases). It was trained on the shortlists of 84,000
+  training stars (10% held out to choose when to stop) to pick the catalogue period, and to keep the first-pass choice when the
+  truth is not on the shortlist. The network itself is unchanged.
+- **Held-out test stars:** OGLE 93.9 -> 96.4%, Kepler 79.4 -> 82.6%, TESS 78.9 -> 80.8%,
+  VVV 53.0 -> 54.6%, ASAS-SN 29.4 -> 32.1% (strictly periodic 44.6 -> 47.5%). On validation:
+  +2.6 points overall (89 stars fixed, 28 broken, p = 1e-8), fewer harmonic errors on every
+  survey.
+- The ranker (1 MB) downloads with the model and is checked against its SHA-256. The search
+  FAP is recalibrated for it.
+- Investigated and not adopted (no better than 1.1 on validation): retraining without the
+  VVV-derived labels, quasi-periodic training signals, a wider network, ensembles, training
+  with contact-binary hard negatives, and a learned per-bin point encoder.
+
 ## 1.1.0 (2026-11-07)
 
 - **More accurate by default:** the network now scores every candidate fold four ways
