@@ -58,7 +58,7 @@ def grid(t):
 
 def slow(method, n):
     """Methods whose cost grows with the full grid x points get the smaller sample."""
-    return method == "nn-full" or (method in ("pdm", "nn-hybrid-pdm", "nn-hybrid-lspdm") and n > 10000)
+    return method == "nn-full" or (method in ("pdm", "pdm-torch", "nn-hybrid-pdm", "nn-hybrid-lspdm") and n > 10000)
 
 
 def top_periods(power, f0, df, k=5):
@@ -92,6 +92,8 @@ def run(method, t, m, e, device):
             p = -pyastronomy_pdm(t, m, f0 + df * np.arange(nf))
         else:
             p = -pdm_theta(t, m, f0 + df * np.arange(nf), dev)
+    elif method == "pdm-torch":                          # the PDM used inside the hybrid modes
+        p = -pdm_theta(t, m, f0 + df * np.arange(nf), dev)
     else:
         raise ValueError(method)
     dt = time.perf_counter() - s
@@ -157,6 +159,8 @@ def main():
     ap.add_argument("--export", help="write the sampled light curves to this file and stop")
     ap.add_argument("--sample", help="read light curves from an --export file instead of the shards")
     ap.add_argument("--threads", type=int, default=0, help="CPU threads for torch (0 = default)")
+    ap.add_argument("--done", nargs="*", default=[], help="other output files whose rows count as done")
+    ap.add_argument("--surveys", nargs="*", help="only these surveys")
     a = ap.parse_args()
     if a.summary:
         return summary(a.summary)
@@ -170,8 +174,12 @@ def main():
     cells = load_sample(a.sample) if a.sample else sample(a.data, cap, a.seed)
     cells = {k: v[:cap] for k, v in cells.items()}
     done = set()
-    if Path(a.out).exists():
-        done = {(r["pass"], r["device"], r["method"], r["shard"], r["index"]) for r in map(json.loads, open(a.out))}
+    for f in [a.out] + a.done:
+        if Path(f).exists():
+            done |= {(r["pass"], r["device"], r["method"], r["shard"], r["index"])
+                     for r in map(json.loads, open(f)) if "error" not in r}
+    if a.surveys:
+        cells = {k: v for k, v in cells.items() if k[0] in a.surveys}
     if a.device == "cuda" and "astropy-ls" in a.methods and a.mode == "speed":
         a.methods = [m for m in a.methods if m != "astropy-ls"]        # astropy has no GPU path
     with open(a.out, "a") as fout:

@@ -78,17 +78,34 @@ on real cadences from all five surveys), because the best of hundreds of folds a
 good by chance. On fresh noise, `best_fap < 0.01` flags 0.2% of light curves and
 `best_fap < 0.1` about 5%. The network's FAP of the best fold alone is `best_fap_fold`.
 
-**Speed** (median per star; same stars and grid; Apple M-series CPU and an RTX 3070 Ti):
+**Every mode, by survey and length.** Percentage right (number of stars), in the top 5,
+and harmonic; median time per light curve on 8 cores of an AMD EPYC 7763 and an RTX A6000.
+The same light curves for every method in a row; bold is the best in the row (rows under 10
+stars are not compared). NN times cover the whole search; classical times the periodogram.
+The table scrolls sideways; the [project page](https://nialljmiller.com/projects/NN_Periodogram/)
+has a pivotable version.
 
-| Light curves | NN_Periodogram CPU | NN_Periodogram GPU | PDM (CPU) | exact LS (CPU) | astropy LS | nifty-ls |
-|---|---|---|---|---|---|---|
-| ~400 points (OGLE, ASAS-SN, VVV) | 0.54–0.58 s | ~0.07 s | 0.09–0.11 s | 0.04–0.08 s | 0.05–0.09 s | 0.004 s |
-| ~65,000 points (Kepler, TESS) | 0.69–0.72 s | ~0.08 s | 9.9–17.7 s | 7.2–8.5 s | 0.08–0.12 s | 0.007 s |
+<!-- modes-table -->
+| Survey | Points | NN hybrid LS right | NN hybrid LS top-5 | NN hybrid LS harm. | NN hybrid LS CPU | NN hybrid LS GPU | NN hybrid PDM right | NN hybrid PDM top-5 | NN hybrid PDM harm. | NN hybrid PDM CPU | NN hybrid PDM GPU | NN hybrid LS+PDM right | NN hybrid LS+PDM top-5 | NN hybrid LS+PDM harm. | NN hybrid LS+PDM CPU | NN hybrid LS+PDM GPU | NN full right | NN full top-5 | NN full harm. | NN full CPU | NN full GPU | PDM (ours) right | PDM (ours) top-5 | PDM (ours) harm. | PDM (ours) CPU | PDM (ours) GPU | PDM (PyAstronomy) CPU | astropy LS right | astropy LS top-5 | astropy LS harm. | astropy LS CPU | nifty-ls right | nifty-ls top-5 | nifty-ls harm. | nifty-ls CPU | nifty-ls GPU |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| OGLE | 10–100 | **87% (100)** | 92% | 1% | 3.1 s | 76 ms | 82% (100) | 86% | 1% | 1.5 s | 33 ms | **87% (100)** | 92% | 2% | 4.6 s | 84 ms | 83% (100) | 93% | 1% | 376 s | 3.2 s | 56% (100) | 77% | 16% | 17 ms | 1 ms | 14.0 s | 77% (100) | 92% | 3% | 869 ms | 77% (100) | 92% | 3% | 7 ms | 6 ms |
+|  | 100–1,000 | **100% (100)** | 100% | 0% | 3.1 s | 79 ms | **100% (100)** | 100% | 0% | 2.1 s | 42 ms | **100% (100)** | 100% | 0% | 5.5 s | 99 ms | 95% (100) | 96% | 2% | 398 s | 4.4 s | 78% (100) | 97% | 20% | 337 ms | 9 ms | 23.1 s | 79% (100) | 80% | 19% | 1.6 s | 79% (100) | 80% | 19% | 16 ms | 7 ms |
+|  | 1,000–10,000 | **98% (100)** | 99% | 1% | 3.5 s | 87 ms | **98% (100)** | 99% | 1% | 11.5 s | 219 ms | **98% (100)** | 99% | 1% | 15.3 s | 281 ms | 90% (100) | 93% | 4% | 1200 s | 10.3 s | 63% (100) | 96% | 37% | 7.4 s | 184 ms | 83.3 s | 18% (100) | 20% | 76% | 3.0 s | 18% (100) | 20% | 76% | 25 ms | 7 ms |
+|  | > 10,000 | **100% (100)** | 100% | 0% | 3.2 s | 80 ms | 99% (100) | 100% | 1% | 20.2 s | 412 ms | **100% (100)** | 100% | 0% | 22.2 s | 461 ms | **100% (100)** | 100% | 0% | 609 s | 5.7 s | **100% (100)** | 100% | 0% | 12.7 s | 372 ms | 108 s | **100% (100)** | 100% | 0% | 1.7 s | **100% (100)** | 100% | 0% | 17 ms | 7 ms |
+| Kepler | 1,000–10,000 | **89% (18)** | 94% | 6% | 3.0 s | 76 ms | 83% (18) | 89% | 6% | 2.3 s | 46 ms | **89% (18)** | 94% | 6% | 5.3 s | 98 ms | 72% (18) | 83% | 17% | 22.9 s | 458 ms | 28% (18) | 67% | 56% | 639 ms | 16 ms | 5.5 s | 0% (18) | 44% | 72% | 19 ms | 0% (18) | 44% | 72% | 3 ms | 6 ms |
+|  | > 10,000 | 78% (100) | 85% | 6% | 3.4 s | 83 ms | **80% (100)** | 86% | 7% | 35.5 s | 1.0 s | **80% (100)** | 87% | 6% | 39.9 s | 1.1 s | 70% (100) | 76% | 9% | 334 s | 2.6 s | 33% (100) | 69% | 46% | 23.0 s | 1.0 s | 163 s | 4% (100) | 33% | 61% | 2.0 s | 4% (100) | 33% | 61% | 19 ms | 6 ms |
+| TESS | > 10,000 | **82% (100)** | 91% | 12% | 3.3 s | 84 ms | **82% (100)** | 93% | 11% | 21.4 s | 726 ms | **82% (100)** | 93% | 11% | 23.1 s | 793 ms | 72% (100) | 82% | 16% | 357 s | 2.4 s | 47% (100) | 82% | 43% | 13.0 s | 700 ms | 88.9 s | 10% (100) | 21% | 71% | 1.2 s | 10% (100) | 21% | 71% | 14 ms | 6 ms |
+| VVV | 10–100 | **40% (10)** | 50% | 0% | 3.0 s | 80 ms | 30% (10) | 30% | 0% | 1.6 s | 36 ms | **40% (10)** | 50% | 0% | 4.7 s | 92 ms | 30% (10) | 40% | 0% | 757 s | 6.5 s | 20% (10) | 30% | 10% | 86 ms | 3 ms | 29.4 s | 10% (10) | 10% | 30% | 4.1 s | 10% (10) | 10% | 30% | 16 ms | 7 ms |
+|  | 100–1,000 | 50% (100) | 68% | 23% | 2.9 s | 81 ms | 44% (100) | 64% | 23% | 2.0 s | 40 ms | 46% (100) | 68% | 26% | 4.9 s | 97 ms | **51% (100)** | 66% | 19% | 796 s | 6.7 s | 39% (100) | 63% | 25% | 225 ms | 6 ms | 31.0 s | 40% (100) | 43% | 29% | 3.6 s | 40% (100) | 43% | 29% | 17 ms | 7 ms |
+|  | 1,000–10,000 | 100% (1) | 100% | 0% | 3.2 s | 79 ms | 100% (1) | 100% | 0% | 3.5 s | 60 ms | 100% (1) | 100% | 0% | 6.6 s | 116 ms | 100% (1) | 100% | 0% | 582 s | 4.8 s | 100% (1) | 100% | 0% | 1.1 s | 27 ms | 30.5 s | 100% (1) | 100% | 0% | 1.8 s | 100% (1) | 100% | 0% | 18 ms | 6 ms |
+| ASAS-SN | 10–100 | **2% (100)** | 7% | 5% | 2.8 s | 70 ms | **2% (100)** | 8% | 5% | 1.2 s | 31 ms | **2% (100)** | 8% | 5% | 4.1 s | 82 ms | 0% (100) | 5% | 11% | 203 s | 2.5 s | 1% (100) | 4% | 3% | 22 ms | 1 ms | 8.7 s | **2% (100)** | 5% | 7% | 717 ms | **2% (100)** | 5% | 7% | 10 ms | 7 ms |
+|  | 100–1,000 | **35% (100)** | 44% | 11% | 2.9 s | 71 ms | 31% (100) | 40% | 9% | 1.7 s | 36 ms | 34% (100) | 43% | 11% | 4.8 s | 91 ms | 29% (100) | 34% | 6% | 682 s | 4.8 s | 27% (100) | 40% | 10% | 219 ms | 6 ms | 22.0 s | 29% (100) | 32% | 17% | 1.7 s | 29% (100) | 32% | 17% | 12 ms | 7 ms |
+|  | 1,000–10,000 | **47% (100)** | 56% | 7% | 3.2 s | 80 ms | 46% (100) | 57% | 9% | 3.8 s | 78 ms | 46% (100) | 56% | 9% | 7.6 s | 133 ms | 44% (100) | 53% | 5% | 671 s | 5.2 s | 31% (100) | 52% | 19% | 2.1 s | 43 ms | 37.6 s | 21% (100) | 27% | 32% | 2.0 s | 21% (100) | 27% | 32% | 16 ms | 7 ms |
+<!-- /modes-table -->
 
-A Lomb-Scargle periodogram is the first step of NN_Periodogram's search, so it cannot be
-faster than the fastest LS; it costs under a second per star and barely grows with the
-number of points. `tta=1` or `proposers=("ls",)` (each about 2× faster on a CPU) trade a
-fraction of a point of accuracy for speed; see the full table on the project page.
+The default (NN hybrid LS) is within 2 points of the best method in every row with at least
+10 stars; adding PDM proposals changes little and costs more on long light curves;
+`method="full"` is no more accurate and 40–100× slower. `tta=1` is about 2× faster on a CPU for a fraction of a point.
 
 ## Ways to use it
 
@@ -109,7 +126,7 @@ fraction of a point of accuracy for speed; see the full table on the project pag
 
 Each candidate fold is scored four ways (as is, magnitudes flipped, time reversed, both)
 and the network's outputs averaged (`tta=4`, the default since 1.1): a little more
-accurate on every survey. `tta=1` is about 2.5x faster on a CPU.
+accurate on every survey. `tta=1` is about 2× faster on a CPU.
 
 Times are days (astropy `Time` and `Quantity` inputs are converted); magnitudes or fluxes;
 errors optional (estimated from point-to-point scatter if absent). Choose the hardware with
